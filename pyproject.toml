@@ -22,7 +22,7 @@ name = "flaggems_sglang"
 version = "0.1.0"
 description = "FlagGems-sglang is a deep neural network function library written in Triton."
 readme = { file = "README.md", content-type = "text/markdown" }
-requires-python = ">=3.8.0"
+requires-python = ">=3.10"
 license = { text = "Apache Software License" }
 authors = [
     { name = "Bin Zhang", email = "842884726@qq.com" },
@@ -34,6 +34,8 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
 ]
 dependencies = [
+    # Development snapshot with separate paged K/V M3 APIs; no Triton extra.
+    "flag-attn @ git+https://github.com/CherryLemon/FlagAttention.git@947ee6225629275a1d11eae6b48edae589b889b7",
     "torch>=2.6.0",
     "packaging",
     "pybind11",
