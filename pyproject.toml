@@ -35,7 +35,7 @@ classifiers = [
 ]
 dependencies = [
     # Development snapshot with separate paged K/V M3 APIs; no Triton extra.
-    "flag-attn @ git+https://github.com/CherryLemon/FlagAttention.git@947ee6225629275a1d11eae6b48edae589b889b7",
+    "flag-attn @ git+https://github.com/CherryLemon/FlagAttention.git@520d7fc9a610f66b29c3345754bda0f04c9b4a90",
     "torch>=2.6.0",
     "packaging",
     "pybind11",
