@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("decode_attention")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -116,17 +113,13 @@ def _check(actual, expected):
     assert_close(actual.to(torch.float32), expected, atol=3e-2, rtol=1e-2)
 
 
-CORRECTNESS_CASES = [
-    _case(2, 4, 4, 64, 10),
-    _case(2, 4, 2, 64, 10),
-    _case(2, 4, 4, 80, 10),
-    _case(2, 16, 1, 512, 128),
+_CASE_FACTORIES = [
+    lambda: _case(2, 4, 4, 64, 10),
+    lambda: _case(2, 4, 2, 64, 10),
+    lambda: _case(2, 4, 4, 80, 10),
+    lambda: _case(2, 16, 1, 512, 128),
 ]
-
-# Lazy (zero-arg callables): total KV-buffer size scales with B * seq_len,
-# so cases are generated one at a time by harness.bench.run_bench_cases
-# rather than all held in memory at once.
-BENCH_CASES = [
+_CASE_FACTORIES += [
     (lambda B=B, seq_len=seq_len: _case(B, 32, 8, 128, seq_len))
     for B, seq_len in (
         (1, 2048),
@@ -136,7 +129,12 @@ BENCH_CASES = [
         (4096, 128),
     )
 ]
-CORRECTNESS_CASES = CORRECTNESS_CASES + [c() for c in BENCH_CASES]
+
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
+
+# Lazy (zero-arg callables): total KV-buffer size scales with B * seq_len,
+# so cases are generated one at a time by harness.bench.run_bench_cases
+# rather than all held in memory at once.
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +145,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + [c() for c in BENCH_CASES]
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.decode_attention
 def test_decode_attention(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("decode_attention")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

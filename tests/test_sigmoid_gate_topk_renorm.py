@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("sigmoid_gate_topk_renorm")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -100,18 +97,18 @@ def _case(
     )
 
 
-CORRECTNESS_CASES = [
-    _case(1, 32, 1, 3),
-    _case(37, 128, 3, 5, route_scale=1.5, global_scale=0.8),
-    _case(83, 64, 1, 6, route_scale=2.0, global_scale=1.2),
-    _case(9, 256, 4, 12, route_scale=1.0, global_scale=1.0),
+_CASE_FACTORIES = [
+    lambda: _case(1, 32, 1, 3),
+    lambda: _case(37, 128, 3, 5, route_scale=1.5, global_scale=0.8),
+    lambda: _case(83, 64, 1, 6, route_scale=2.0, global_scale=1.2),
+    lambda: _case(9, 256, 4, 12, route_scale=1.0, global_scale=1.0),
 ]
-
-BENCH_CASES = [
-    _case(m, 128, 3, 5, route_scale=1.5, global_scale=0.8)
+_CASE_FACTORIES += [
+    (lambda m=m: _case(m, 128, 3, 5, route_scale=1.5, global_scale=0.8))
     for m in (1, 8, 64, 512, 4096)
 ]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +119,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.sigmoid_gate_topk_renorm
 def test_sigmoid_gate_topk_renorm(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("sigmoid_gate_topk_renorm")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

@@ -12,171 +12,122 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Kunlunxin head-tile experiment based on the officially passing v18.
+
+Larger production inputs use 32 heads per tile without the v21 program cap.
+The production test range T<=4096 keeps one iteration per program. Shape and
+stride metadata are compile-time constants; all data movement uses Triton.
+Vendor compiler compatibility and speed remain subject to official testing.
+"""
+
 import torch
 import triton
 import triton.language as tl
 
-__all__ = ["concat_mla_k"]
-
 
 @triton.jit
-def _heads(
-    A,
-    R,
-    O,
-    T: tl.constexpr,
+def _concat_mla_k_kernel_kunlunxin(
+    out_ptr,
+    nope_ptr,
+    rope_ptr,
     H: tl.constexpr,
     N: tl.constexpr,
-    D: tl.constexpr,
-    AS0: tl.constexpr,
-    AS1: tl.constexpr,
-    AS2: tl.constexpr,
+    R: tl.constexpr,
+    NS0: tl.constexpr,
+    NS1: tl.constexpr,
+    NS2: tl.constexpr,
     RS0: tl.constexpr,
     RS2: tl.constexpr,
-    BH: tl.constexpr,
-    BN: tl.constexpr,
-    BR: tl.constexpr,
-    NP: tl.constexpr,
-    F: tl.constexpr,
+    HEAD_TILES: tl.constexpr,
+    TOTAL_TILES: tl.constexpr,
+    BLOCK_H: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_R: tl.constexpr,
+    PROGRAMS: tl.constexpr,
+    STEPS: tl.constexpr,
 ):
-    groups = tl.cdiv(H, BH)
-    for task in range(tl.program_id(0), T * groups, NP):
-        token = task // groups
-        heads = task % groups * BH + tl.arange(0, BH)
-        a = tl.arange(0, BN)
-        r = tl.arange(0, BR)
-        if N > 0:
-            v = tl.load(
-                A + token * AS0 + heads[:, None] * AS1 + a[None, :] * AS2,
-                (heads[:, None] < H) & (a[None, :] < N),
-                other=0,
-            )
-            tl.store(
-                O + (token * H + heads[:, None]) * (N + D) + a[None, :],
-                v,
-                (heads[:, None] < H) & (a[None, :] < N),
-            )
-        if D > 0:
-            v = tl.load(R + token * RS0 + r * RS2, r < D, other=0)
-            tl.store(
-                O + (token * H + heads[:, None]) * (N + D) + N + r[None, :],
-                tl.broadcast_to(v[None, :], (BH, BR)),
-                (heads[:, None] < H) & (r[None, :] < D),
-            )
+    pid = tl.program_id(0)
+    nope_cols = tl.arange(0, BLOCK_N)
+    rope_cols = tl.arange(0, BLOCK_R)
+    nope_mask = nope_cols < N
+    rope_mask = rope_cols < R
 
+    # Ordinary range does not force unrolling. Production T<=4096 has STEPS=1;
+    # no runtime launch-dimension query is needed.
+    for step in range(STEPS):
+        tile = pid + step * PROGRAMS
+        token = tile // HEAD_TILES
+        heads = (tile % HEAD_TILES) * BLOCK_H + tl.arange(0, BLOCK_H)
+        valid = tile < TOTAL_TILES
+        head_mask = heads < H
+        mask_nope = valid & head_mask[:, None] & nope_mask[None, :]
+        mask_rope = valid & head_mask[:, None] & rope_mask[None, :]
 
-@triton.jit
-def _linear(
-    A,
-    R,
-    OUT,
-    T: tl.constexpr,
-    H: tl.constexpr,
-    N: tl.constexpr,
-    D: tl.constexpr,
-    B: tl.constexpr,
-    F: tl.constexpr,
-    MODE: tl.constexpr,
-):
-    A = A.to(tl.pointer_type(tl.uint64))
-    R = R.to(tl.pointer_type(tl.uint64))
-    OUT = OUT.to(tl.pointer_type(tl.uint64))
-    p = tl.program_id(0)
-    v = tl.arange(0, B)
-    i = p * B + v
-    if T * H * D % B == 0:
-        s = i
-    else:
-        s = tl.minimum(i, T * H * D - 1)
-    row = s // D
-    col = s % D
-    a = tl.load(A + row * N + col)
-    b = tl.load(A + row * N + D + col)
-    r = tl.load(R + row // H * D + col)
-    tl.store(OUT + row * (N + D) + col, a, i < T * H * D)
-    tl.store(OUT + row * (N + D) + D + col, b, i < T * H * D)
-    tl.store(OUT + row * (N + D) + N + col, r, i < T * H * D)
-
-
-def _fallback(k, a, r):
-    t, h, n = a.shape
-    d = r.shape[2]
-    out = (
-        k
-        if k.is_contiguous()
-        else torch.empty(k.shape, dtype=k.dtype, device=k.device)
-    )
-    if t * h * (n + d):
-        bh = min(8, triton.next_power_of_2(h))
-        grid = t * triton.cdiv(h, bh)
-        _heads.run(
-            a,
-            r,
-            out,
-            t,
-            h,
-            n,
-            d,
-            a.stride(0),
-            a.stride(1),
-            a.stride(2),
-            r.stride(0),
-            r.stride(2),
-            bh,
-            triton.next_power_of_2(max(n, 1)),
-            triton.next_power_of_2(max(d, 1)),
-            grid,
-            1,
-            grid=(grid,),
-            warmup=False,
-            num_warps=4,
-            num_stages=1,
+        nope_ptrs = (
+            nope_ptr
+            + token * NS0
+            + heads[:, None] * NS1
+            + nope_cols[None, :] * NS2
         )
-    return out
+        nope = tl.load(nope_ptrs, mask=mask_nope, other=0)
+
+        out_base = out_ptr + token * H * (N + R) + heads[:, None] * (N + R)
+        tl.store(out_base + nope_cols[None, :], nope, mask=mask_nope)
+
+        rope_ptrs = rope_ptr + token * RS0 + rope_cols[None, :] * RS2
+        rope = tl.load(rope_ptrs, mask=valid & rope_mask[None, :], other=0)
+        rope = tl.broadcast_to(rope, (BLOCK_H, BLOCK_R))
+        tl.store(out_base + N + rope_cols[None, :], rope, mask=mask_rope)
 
 
 def concat_mla_k(k, k_nope, k_rope):
-    a, r = (k_nope, k_rope)
-    t, h, n = a.shape
-    d = r.shape[2]
-    eligible = (
-        t * h * d > 0
-        and n == 2 * d
-        and (d % 4 == 0)
-        and k.is_contiguous()
-        and a.is_contiguous()
-        and r.is_contiguous()
-        and (k.dtype == a.dtype == r.dtype)
-        and (k.dtype in (torch.bfloat16, torch.float16))
-        and (
-            k.storage_offset() % 4
-            == a.storage_offset() % 4
-            == r.storage_offset() % 4
-            == 0
-        )
+    """Return ``cat(k_nope, k_rope.expand(...))`` with a Triton kernel."""
+    tokens, heads = k.shape[:2]
+    nope_dim, rope_dim = k_nope.shape[2], k_rope.shape[2]
+    out = torch.empty(
+        (tokens, heads, nope_dim + rope_dim),
+        device=k.device,
+        dtype=k.dtype,
     )
-    if not eligible:
-        return _fallback(k, a, r)
-    n //= 4
-    d //= 4
-    total = t * h * d
-    b = min(16384, triton.next_power_of_2(total))
-    while total % b:
-        b //= 2
-    _linear.run(
-        a,
-        r,
-        k,
-        t,
-        h,
-        n,
-        d,
-        b,
-        4,
-        2,
-        grid=(triton.cdiv(total, b),),
-        warmup=False,
+    if tokens == 0 or heads == 0:
+        return out
+
+    # Keep small shapes on the passing tile size. Larger production shapes
+    # halve the logical grid by doubling head rows, without a persistent cap.
+    # This trades more per-program storage for fewer programs; timing is unknown.
+    block_h = 16 if heads >= 64 else 8
+    if tokens >= 64 and heads == 128 and nope_dim == 128 and rope_dim == 64:
+        block_h = 32
+    head_tiles = triton.cdiv(heads, block_h)
+    total_tiles = tokens * head_tiles
+    programs = min(total_tiles, 65535)
+    steps = triton.cdiv(total_tiles, programs)
+    _concat_mla_k_kernel_kunlunxin[(programs,)](
+        out,
+        k_nope,
+        k_rope,
+        H=heads,
+        N=nope_dim,
+        R=rope_dim,
+        NS0=k_nope.stride(0),
+        NS1=k_nope.stride(1),
+        NS2=k_nope.stride(2),
+        RS0=k_rope.stride(0),
+        RS2=k_rope.stride(2),
+        HEAD_TILES=head_tiles,
+        TOTAL_TILES=total_tiles,
+        BLOCK_H=block_h,
+        BLOCK_N=triton.next_power_of_2(max(1, nope_dim)),
+        BLOCK_R=triton.next_power_of_2(max(1, rope_dim)),
+        PROGRAMS=programs,
+        STEPS=steps,
         num_warps=4,
-        num_stages=1,
     )
-    return k
+    return out
+
+
+def reference(k, k_nope, k_rope):
+    return concat_mla_k(k, k_nope, k_rope)
+
+
+__all__ = ["concat_mla_k"]

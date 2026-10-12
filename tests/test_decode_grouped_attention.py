@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("decode_grouped_attention")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -117,14 +114,13 @@ def _check(actual, expected):
 # H_Q:H_KV ratios chosen well above the MHA/small-GQA range already
 # exercised by attention/decode_attention, to actually route through the
 # grouped kernel (kv_group_num > 1) with a realistic MLA-style head count.
-CORRECTNESS_CASES = [
-    _case(2, 32, 1, 64, 10),
-    _case(2, 128, 1, 64, 10),
-    _case(2, 32, 4, 80, 10),
-    _case(2, 128, 8, 512, 128),
+_CASE_FACTORIES = [
+    lambda: _case(2, 32, 1, 64, 10),
+    lambda: _case(2, 128, 1, 64, 10),
+    lambda: _case(2, 32, 4, 80, 10),
+    lambda: _case(2, 128, 8, 512, 128),
 ]
-
-BENCH_CASES = [
+_CASE_FACTORIES += [
     (lambda B=B, seq_len=seq_len: _case(B, 128, 1, 128, seq_len))
     for B, seq_len in (
         (1, 2048),
@@ -134,7 +130,8 @@ BENCH_CASES = [
         (4096, 128),
     )
 ]
-CORRECTNESS_CASES = CORRECTNESS_CASES + [c() for c in BENCH_CASES]
+
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +142,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + [c() for c in BENCH_CASES]
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.decode_grouped_attention
 def test_decode_grouped_attention(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("decode_grouped_attention")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

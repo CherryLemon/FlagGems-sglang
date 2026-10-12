@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("per_token_quant_int8")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -95,19 +92,19 @@ def _check(actual, expected):
     ), "too many int8 rounding-boundary mismatches"
 
 
-CORRECTNESS_CASES = [
-    dict(x=_x(7, 128), check=_check),
-    dict(x=_x(83, 512), check=_check),
-    dict(x=_x(256, 4096), check=_check),
-    dict(x=_x(3, 4736), check=_check),
+_CASE_FACTORIES = [
+    lambda: dict(x=_x(7, 128), check=_check),
+    lambda: dict(x=_x(83, 512), check=_check),
+    lambda: dict(x=_x(256, 4096), check=_check),
+    lambda: dict(x=_x(3, 4736), check=_check),
 ]
-
-BENCH_CASES = [
-    dict(x=_x(m, k), check=_check)
+_CASE_FACTORIES += [
+    (lambda m=m, k=k: dict(x=_x(m, k), check=_check))
     for m in (1, 8, 64, 512, 4096)
     for k in (2048, 4096, 8192)
 ]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +115,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.per_token_quant_int8
 def test_per_token_quant_int8(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("per_token_quant_int8")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

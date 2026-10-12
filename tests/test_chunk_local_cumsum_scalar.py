@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("chunk_local_cumsum_scalar")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -81,15 +78,19 @@ def _case(
     return dict(g=x, chunk_size=chunk_size, reverse=reverse, scale=scale)
 
 
-CORRECTNESS_CASES = [
-    _case(1, 1, 8, 4),
-    _case(2, 3, 16, 8, reverse=True),
-    _case(3, 2, 32, 16, scale=0.5),
+_CASE_FACTORIES = [
+    lambda: _case(1, 1, 8, 4),
+    lambda: _case(2, 3, 16, 8, reverse=True),
+    lambda: _case(3, 2, 32, 16, scale=0.5),
 ]
 
-BENCH_CASES = [
-    _case(8, 16, 64, 32),
-    _case(32, 4, 64, 64),
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
+
+# Benchmark cases are not parametrized by this module; keep them as
+# zero-arg factories so importing the module allocates nothing.
+_BENCH_CASE_FACTORIES = [
+    lambda: _case(8, 16, 64, 32),
+    lambda: _case(32, 4, 64, 64),
 ]
 
 
@@ -101,7 +102,10 @@ BENCH_CASES = [
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.chunk_local_cumsum_scalar
 def test_chunk_local_cumsum_scalar(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("chunk_local_cumsum_scalar")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

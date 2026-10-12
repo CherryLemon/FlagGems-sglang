@@ -12,177 +12,180 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Ascend candidate: block-pointer copies with unchanged 32-program scheduling.
+
+Standard Triton only. This file is standalone and selected by its chip suffix.
+Hardware performance must be established by the official evaluation.
+"""
+
 import torch
 import triton
 import triton.language as tl
 
-__all__ = ["concat_mla_k"]
 
-
-@triton.jit(do_not_specialize=["A", "R", "O"])
-def _heads(
-    A,
-    R,
-    O,
-    T: tl.constexpr,
+@triton.jit
+def _concat_mla_k_kernel_ascend(
+    out_ptr,
+    nope_ptr,
+    rope_ptr,
     H: tl.constexpr,
     N: tl.constexpr,
-    D: tl.constexpr,
-    AS0: tl.constexpr,
-    AS1: tl.constexpr,
-    AS2: tl.constexpr,
+    R: tl.constexpr,
+    NS0: tl.constexpr,
+    NS1: tl.constexpr,
+    NS2: tl.constexpr,
     RS0: tl.constexpr,
     RS2: tl.constexpr,
-    BH: tl.constexpr,
-    BN: tl.constexpr,
-    BR: tl.constexpr,
-    NP: tl.constexpr,
-    F: tl.constexpr,
+    HEAD_TILES: tl.constexpr,
+    TOTAL_TILES: tl.constexpr,
+    BLOCK_H: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_R: tl.constexpr,
+    PROGRAMS: tl.constexpr,
+    STEPS: tl.constexpr,
+    USE_BLOCK_PTR: tl.constexpr,
 ):
-    groups = tl.cdiv(H, BH)
-    for task in range(tl.program_id(0), T * groups, NP):
-        token = task // groups
-        heads = task % groups * BH + tl.arange(0, BH)
-        a = tl.arange(0, BN)
-        r = tl.arange(0, BR)
-        if N > 0:
-            v = tl.load(
-                A + token * AS0 + heads[:, None] * AS1 + a[None, :] * AS2,
-                (heads[:, None] < H) & (a[None, :] < N),
+    for step in range(STEPS):
+        tile = tl.program_id(0) + step * PROGRAMS
+        token = tile // HEAD_TILES
+        heads = (tile % HEAD_TILES) * BLOCK_H + tl.arange(0, BLOCK_H)
+        valid = tile < TOTAL_TILES
+        nope_cols = tl.arange(0, BLOCK_N)
+        rope_cols = tl.arange(0, BLOCK_R)
+
+        if USE_BLOCK_PTR:
+            tokens: tl.constexpr = TOTAL_TILES // HEAD_TILES
+            head_start = (tile % HEAD_TILES) * BLOCK_H
+            # Explicit rectangular views include the token boundary for tail steps.
+            src_nope = tl.make_block_ptr(
+                base=nope_ptr,
+                shape=(tokens, H, N),
+                strides=(NS0, NS1, NS2),
+                offsets=(token, head_start, 0),
+                block_shape=(1, BLOCK_H, BLOCK_N),
+                order=(2, 1, 0),
+            )
+            dst_nope = tl.make_block_ptr(
+                base=out_ptr,
+                shape=(tokens, H, N),
+                strides=(H * (N + R), N + R, 1),
+                offsets=(token, head_start, 0),
+                block_shape=(1, BLOCK_H, BLOCK_N),
+                order=(2, 1, 0),
+            )
+            nope = tl.load(
+                src_nope, boundary_check=(0, 1, 2), padding_option="zero"
+            )
+            tl.store(dst_nope, nope, boundary_check=(0, 1, 2))
+            src_rope = tl.make_block_ptr(
+                base=rope_ptr,
+                shape=(tokens, 1, R),
+                strides=(RS0, R, RS2),
+                offsets=(token, 0, 0),
+                block_shape=(1, 1, BLOCK_R),
+                order=(2, 1, 0),
+            )
+            dst_rope = tl.make_block_ptr(
+                base=out_ptr + N,
+                shape=(tokens, H, R),
+                strides=(H * (N + R), N + R, 1),
+                offsets=(token, head_start, 0),
+                block_shape=(1, BLOCK_H, BLOCK_R),
+                order=(2, 1, 0),
+            )
+            rope = tl.load(
+                src_rope, boundary_check=(0, 1, 2), padding_option="zero"
+            )
+            rope = tl.broadcast_to(rope, (1, BLOCK_H, BLOCK_R))
+            tl.store(dst_rope, rope, boundary_check=(0, 1, 2))
+        else:
+            nope = tl.load(
+                nope_ptr
+                + token * NS0
+                + heads[:, None] * NS1
+                + nope_cols[None, :] * NS2,
+                mask=valid & (heads[:, None] < H) & (nope_cols[None, :] < N),
                 other=0,
             )
             tl.store(
-                O + (token * H + heads[:, None]) * (N + D) + a[None, :],
-                v,
-                (heads[:, None] < H) & (a[None, :] < N),
+                out_ptr
+                + token * H * (N + R)
+                + heads[:, None] * (N + R)
+                + nope_cols[None, :],
+                nope,
+                mask=valid & (heads[:, None] < H) & (nope_cols[None, :] < N),
             )
-        if D > 0:
-            v = tl.load(R + token * RS0 + r * RS2, r < D, other=0)
+            rope = tl.load(
+                rope_ptr + token * RS0 + rope_cols[None, :] * RS2,
+                mask=valid & (rope_cols[None, :] < R),
+                other=0,
+            )
+            rope = tl.broadcast_to(rope, (BLOCK_H, BLOCK_R))
             tl.store(
-                O + (token * H + heads[:, None]) * (N + D) + N + r[None, :],
-                tl.broadcast_to(v[None, :], (BH, BR)),
-                (heads[:, None] < H) & (r[None, :] < D),
+                out_ptr
+                + token * H * (N + R)
+                + heads[:, None] * (N + R)
+                + N
+                + rope_cols[None, :],
+                rope,
+                mask=valid & (heads[:, None] < H) & (rope_cols[None, :] < R),
             )
 
 
-def _native(fn, pointers, constants, programs, warps):
-    fn[(programs, 1, 1)](
-        *pointers,
-        *constants,
-        num_warps=warps,
-        num_stages=1,
+def concat_mla_k(k, k_nope, k_rope):
+    """Copy NoPE and broadcast RoPE into new storage; all inputs are read-only."""
+    tokens, heads = k.shape[:2]
+    nope_dim, rope_dim = k_nope.shape[2], k_rope.shape[2]
+    out = torch.empty(
+        (tokens, heads, nope_dim + rope_dim), device=k.device, dtype=k.dtype
     )
-
-
-def _fallback(k, k_nope, k_rope):
-    a, r = (k_nope, k_rope)
-    t, h, n = a.shape
-    d = r.shape[2]
-    out = (
-        k
-        if k.is_contiguous()
-        else torch.empty(k.shape, dtype=k.dtype, device=k.device)
-    )
-    if t * h * (n + d) == 0:
+    if tokens == 0 or heads == 0:
         return out
-    bn = triton.next_power_of_2(max(n, 1))
-    br = triton.next_power_of_2(max(d, 1))
-    bh = min(triton.next_power_of_2(h), max(1, 16384 // max(bn, br)))
-    grid = t * triton.cdiv(h, bh)
-    _native(
-        _heads,
-        (a, r, out),
-        (
-            t,
-            h,
-            n,
-            d,
-            a.stride(0),
-            a.stride(1),
-            a.stride(2),
-            r.stride(0),
-            r.stride(2),
-            bh,
-            bn,
-            br,
-            grid,
-            1,
-        ),
-        grid,
-        4,
+    block_h = min(
+        128, max(8, triton.next_power_of_2(triton.cdiv(tokens * heads, 32)))
+    )
+    head_tiles = triton.cdiv(heads, block_h)
+    total_tiles = tokens * head_tiles
+    programs = min(total_tiles, 32)
+    grid = (programs,)
+    # Select by shape/layout only; both variants execute this Triton kernel.
+    use_block_ptr = (
+        heads == 128
+        and nope_dim == 128
+        and rope_dim == 64
+        and k_nope.stride(0) == heads * nope_dim
+        and k_nope.stride(1) == nope_dim
+        and k_nope.stride(2) == 1
+        and k_rope.stride(0) == rope_dim
+        and k_rope.stride(2) == 1
+    )
+    _concat_mla_k_kernel_ascend[grid](
+        out,
+        k_nope,
+        k_rope,
+        H=heads,
+        N=nope_dim,
+        R=rope_dim,
+        NS0=k_nope.stride(0),
+        NS1=k_nope.stride(1),
+        NS2=k_nope.stride(2),
+        RS0=k_rope.stride(0),
+        RS2=k_rope.stride(2),
+        HEAD_TILES=head_tiles,
+        TOTAL_TILES=total_tiles,
+        BLOCK_H=block_h,
+        BLOCK_N=triton.next_power_of_2(max(1, nope_dim)),
+        BLOCK_R=triton.next_power_of_2(max(1, rope_dim)),
+        PROGRAMS=programs,
+        STEPS=triton.cdiv(total_tiles, programs),
+        USE_BLOCK_PTR=use_block_ptr,
+        num_warps=4,
     )
     return out
 
 
-@triton.jit(do_not_specialize=["NOPE", "ROPE", "OUT"])
-def _compact(
-    NOPE,
-    ROPE,
-    OUT,
-    H: tl.constexpr,
-    N: tl.constexpr,
-    P: tl.constexpr,
-    R: tl.constexpr,
-):
-    pid = tl.program_id(0)
-    rows = pid * R + tl.arange(0, R)
-    cn = tl.arange(0, N)
-    cp = tl.arange(0, P)
-    tl.store(
-        OUT + rows[:, None] * (N + P) + cn[None, :],
-        tl.load(NOPE + rows[:, None] * N + cn[None, :]),
-    )
-    r = tl.load(ROPE + pid * R // H * P + cp)
-    tl.store(
-        OUT + rows[:, None] * (N + P) + N + cp[None, :],
-        tl.broadcast_to(r[None, :], (R, P)),
-    )
+def reference(k, k_nope, k_rope):
+    return concat_mla_k(k, k_nope, k_rope)
 
 
-def concat_mla_k(k, k_nope, k_rope):
-    a, r = (k_nope, k_rope)
-    t, h, n = a.shape
-    d = r.shape[2]
-    if not (
-        t * h * n * d
-        and n & n - 1 == 0
-        and (d & d - 1 == 0)
-        and (h % 64 == 0)
-        and k.is_contiguous()
-        and a.is_contiguous()
-        and r.is_contiguous()
-    ):
-        return _fallback(k, a, r)
-    at = (
-        "*bf16"
-        if a.dtype == torch.bfloat16
-        else (
-            "*fp16"
-            if a.dtype == torch.float16
-            else "*fp32" if a.dtype == torch.float32 else None
-        )
-    )
-    rt = (
-        "*bf16"
-        if r.dtype == torch.bfloat16
-        else (
-            "*fp16"
-            if r.dtype == torch.float16
-            else "*fp32" if r.dtype == torch.float32 else None
-        )
-    )
-    kt = (
-        "*bf16"
-        if k.dtype == torch.bfloat16
-        else (
-            "*fp16"
-            if k.dtype == torch.float16
-            else "*fp32" if k.dtype == torch.float32 else None
-        )
-    )
-    if at is None or rt is None or kt is None:
-        return _fallback(k, a, r)
-    rows = 64 if t <= 64 or h % 128 else 128
-    grid = t * (h // rows)
-    _compact[(grid, 1, 1)](a, r, k, h, n, d, rows, num_warps=4, num_stages=1)
-    return k
+__all__ = ["concat_mla_k"]

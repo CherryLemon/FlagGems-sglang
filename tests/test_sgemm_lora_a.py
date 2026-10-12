@@ -21,9 +21,6 @@ import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 from flaggems_sglang.reference._lora_batch_utils import make_batch_info
 
-reference = get_reference("sgemm_lora_a")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -96,17 +93,15 @@ def _case(
     )
 
 
-CORRECTNESS_CASES = [
-    _case([5], 1, 16, 64),
-    _case([3, 7, 0, 12], 2, 16, 128, stack_num=1),
-    _case([9, 4], 2, 32, 256, stack_num=3, permutation="shuffled"),
+_CASE_FACTORIES = [
+    lambda: _case([5], 1, 16, 64),
+    lambda: _case([3, 7, 0, 12], 2, 16, 128, stack_num=1),
+    lambda: _case([9, 4], 2, 32, 256, stack_num=3, permutation="shuffled"),
+    lambda: _case([64] * 8, 4, 32, 4096, stack_num=1),
+    lambda: _case([256] * 4, 2, 64, 4096, stack_num=1),
 ]
 
-BENCH_CASES = [
-    _case([64] * 8, 4, 32, 4096, stack_num=1),
-    _case([256] * 4, 2, 64, 4096, stack_num=1),
-]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +112,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.sgemm_lora_a
 def test_sgemm_lora_a(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("sgemm_lora_a")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

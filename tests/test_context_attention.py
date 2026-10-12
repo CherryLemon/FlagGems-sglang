@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("context_attention")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -118,20 +115,20 @@ def _check(actual, expected):
     assert_close(actual.to(torch.float32), expected, atol=1e-2, rtol=1e-2)
 
 
-CORRECTNESS_CASES = [
-    _case([8, 12], 4, 128, True),
-    _case([8, 12], 4, 128, False),
-    _case([5, 30, 7], 4, 96, True),
-    _case([20], 4, 80, True),
-    _case([9], 4, 13, True),
+_CASE_FACTORIES = [
+    lambda: _case([8, 12], 4, 128, True),
+    lambda: _case([8, 12], 4, 128, False),
+    lambda: _case([5, 30, 7], 4, 96, True),
+    lambda: _case([20], 4, 80, True),
+    lambda: _case([9], 4, 13, True),
 ]
-
-BENCH_CASES = [
-    _case([seq_len] * bs, 32, 128, True)
+_CASE_FACTORIES += [
+    (lambda bs=bs, seq_len=seq_len: _case([seq_len] * bs, 32, 128, True))
     for bs in (1, 8, 64)
     for seq_len in (128, 2048)
 ]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +139,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.context_attention
 def test_context_attention(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("context_attention")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

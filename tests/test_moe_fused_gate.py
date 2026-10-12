@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("moe_fused_gate")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -104,9 +101,9 @@ def _case(
     )
 
 
-CORRECTNESS_CASES = [
-    _case(1, 8, 2),
-    _case(
+_CASE_FACTORIES = [
+    lambda: _case(1, 8, 2),
+    lambda: _case(
         37,
         256,
         8,
@@ -115,8 +112,8 @@ CORRECTNESS_CASES = [
         num_expert_group=8,
         topk_group=4,
     ),
-    _case(83, 64, 6, scoring_func="sqrtsoftplus"),
-    _case(
+    lambda: _case(83, 64, 6, scoring_func="sqrtsoftplus"),
+    lambda: _case(
         17,
         32,
         4,
@@ -124,7 +121,7 @@ CORRECTNESS_CASES = [
         moe_softcapping=30.0,
         renormalize=False,
     ),
-    _case(
+    lambda: _case(
         9,
         128,
         6,
@@ -133,14 +130,21 @@ CORRECTNESS_CASES = [
         dtype=torch.float32,
     ),
 ]
-
-BENCH_CASES = [
-    _case(
-        m, 256, 8, num_fused_shared_experts=1, num_expert_group=8, topk_group=4
+_CASE_FACTORIES += [
+    (
+        lambda m=m: _case(
+            m,
+            256,
+            8,
+            num_fused_shared_experts=1,
+            num_expert_group=8,
+            topk_group=4,
+        )
     )
     for m in (1, 8, 64, 512, 4096)
 ]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +155,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.moe_fused_gate
 def test_moe_fused_gate(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("moe_fused_gate")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

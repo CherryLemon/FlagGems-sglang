@@ -23,9 +23,6 @@ from flaggems_sglang.reference.chunk_cumsum import (
     reference as chunk_cumsum_reference,
 )
 
-reference = get_reference("state_passing")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -116,17 +113,15 @@ def _case(
     )
 
 
-CORRECTNESS_CASES = [
-    _case(1, 1, 8, 4, 16),
-    _case(2, 3, 16, 8, 32, has_init=True),
-    _case(3, 5, 32, 16, 64),
+_CASE_FACTORIES = [
+    lambda: _case(1, 1, 8, 4, 16),
+    lambda: _case(2, 3, 16, 8, 32, has_init=True),
+    lambda: _case(3, 5, 32, 16, 64),
+    lambda: _case(8, 16, 256, 32, 8192),
+    lambda: _case(32, 4, 256, 64, 8192),
 ]
 
-BENCH_CASES = [
-    _case(8, 16, 256, 32, 8192),
-    _case(32, 4, 256, 64, 8192),
-]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +132,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.state_passing
 def test_state_passing(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("state_passing")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

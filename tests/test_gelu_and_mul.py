@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("gelu_and_mul")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -74,19 +71,19 @@ def _check(actual, expected):
     assert_close(actual, expected)
 
 
-CORRECTNESS_CASES = [
-    dict(hidden_states=_x(7, 16), check=_check),
-    dict(hidden_states=_x(83, 1024), check=_check),
-    dict(hidden_states=_x(48, 3072), check=_check),
-    dict(hidden_states=_x(1, 8192), check=_check),
+_CASE_FACTORIES = [
+    lambda: dict(hidden_states=_x(7, 16), check=_check),
+    lambda: dict(hidden_states=_x(83, 1024), check=_check),
+    lambda: dict(hidden_states=_x(48, 3072), check=_check),
+    lambda: dict(hidden_states=_x(1, 8192), check=_check),
 ]
-
-BENCH_CASES = [
-    dict(hidden_states=_x(bs, d), check=_check)
+_CASE_FACTORIES += [
+    (lambda bs=bs, d=d: dict(hidden_states=_x(bs, d), check=_check))
     for bs in (1, 8, 64, 512, 4096)
     for d in (1024, 4096, 8192)
 ]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +94,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.gelu_and_mul
 def test_gelu_and_mul(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("gelu_and_mul")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

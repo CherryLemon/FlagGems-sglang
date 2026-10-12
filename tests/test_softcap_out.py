@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("softcap_out")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -76,12 +73,18 @@ def _case(m, n, softcap_const=30.0):
     return dict(x=_x(m, n), softcap_const=softcap_const)
 
 
-CORRECTNESS_CASES = [_case(1, 17), _case(37, 1024), _case(4, 32000)]
-
-BENCH_CASES = [
-    _case(m, n) for m in (1, 8, 64, 512) for n in (4096, 32000, 128256)
+_CASE_FACTORIES = [
+    lambda: _case(1, 17),
+    lambda: _case(37, 1024),
+    lambda: _case(4, 32000),
 ]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+_CASE_FACTORIES += [
+    (lambda m=m, n=n: _case(m, n))
+    for m in (1, 8, 64, 512)
+    for n in (4096, 32000, 128256)
+]
+
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +95,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.softcap_out
 def test_softcap_out(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("softcap_out")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case
