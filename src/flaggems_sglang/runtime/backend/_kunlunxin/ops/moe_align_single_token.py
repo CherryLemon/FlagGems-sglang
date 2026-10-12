@@ -71,8 +71,4 @@ def moe_align_single_token(topk_ids, block_size):
     return sorted_ids, experts, post
 
 
-def reference(topk_ids, block_size):
-    return moe_align_single_token(topk_ids, block_size)
-
-
 __all__ = ["moe_align_single_token"]
