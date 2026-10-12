@@ -638,6 +638,12 @@ def parse_perf_data(op, result_file):
     bench_res = {}
     records = data.get("details", [])
 
+    # Collect, deduplicated, every "no baseline match" reason reported by the
+    # benchmark layer (op / shape / dtype missing). Only populated when
+    # --base-data was passed and some shape failed to match.
+    base_miss_reasons = []
+    seen_reasons = set()
+
     for item in records:
         dtype = consts.DTYPE_MAP.get(item["dtype"], item["dtype"])
         details = {}
@@ -648,8 +654,23 @@ def parse_perf_data(op, result_file):
             details.setdefault(shape, {})
             details[shape]["base"] = res.get("latency_base", 0.0)
             details[shape]["gems"] = res.get("latency", 0.0)
+            # "speedup" defaults to the gems-vs-torch ratio measured on this
+            # machine. When --base-data matched this op/shape/dtype, overwrite
+            # it in place with the baseline comparison (vs Base) so summary.json
+            # carries that value directly in the same field. On a miss, keep the
+            # measured ratio unchanged and only record why the baseline was
+            # skipped.
             speedup = res.get("speedup", 0.0)
+            compared = res.get("compared_speedup", None)
+            if compared is not None:
+                speedup = compared
             details[shape]["speedup"] = speedup
+            miss = res.get("base_miss_reason", None)
+            if miss:
+                details[shape]["base_miss_reason"] = miss
+                if miss not in seen_reasons:
+                    seen_reasons.add(miss)
+                    base_miss_reasons.append(miss)
             count += 1
             total += speedup
 
@@ -666,11 +687,14 @@ def parse_perf_data(op, result_file):
                 "speedup": 0,
             }
 
-    return {
+    record = {
         "status": result.title(),
         "data": bench_res,
         "test_case": data.get("test_case", "Unknown"),
     }
+    if base_miss_reasons:
+        record["base_miss_reasons"] = base_miss_reasons
+    return record
 
 
 def run_accuracy_q(gpu_id, op):
@@ -746,6 +770,16 @@ def run_benchmark_q(gpu_id, op):
 
     dur = time.time()
     cmd = f'pytest -m "{op}" --level core --record json --output benchmark_{op}.json --continue-on-collection-errors'
+    if getattr(CFG, "base_data", None):
+        # Use "--base-data=<path>" (with '=') rather than a space-separated
+        # value. pytest resolves rootdir BEFORE conftest registers this option,
+        # so a space-separated absolute path (e.g. one living outside the repo)
+        # is mistaken for a positional test path, dragging rootdir to that
+        # path's directory. Then pytest.ini is not found and every custom option
+        # (--level/--record/--base-data) becomes "unrecognized". Gluing the
+        # value with '=' keeps it a single '--'-prefixed token that early
+        # parsing ignores, so rootdir stays inside the repo.
+        cmd += f" --base-data={shlex.quote(CFG.base_data)}"
     code = run_cmd(op, cmd, cwd=benchmark_dir, env=env, flavor="performance")
     dur = time.time() - dur
 
@@ -1298,6 +1332,18 @@ def main():
         help="Run tests in quick mode (reduced parameter combinations for faster testing)",
     )
     parser.add_argument(
+        "--base-data",
+        required=False,
+        default=None,
+        metavar="FILE",
+        help=(
+            "Path to an NVIDIA baseline JSON (e.g. op_sglang_baseline.json). "
+            "When provided, benchmarks show an extra 'vs Base' column and the "
+            "baseline comparison becomes the reported speedup for matched "
+            "op/shape/dtype. If omitted, behavior is unchanged."
+        ),
+    )
+    parser.add_argument(
         "--color",
         choices=["auto", "always", "never"],
         default="auto",
@@ -1307,6 +1353,7 @@ def main():
     CFG.dump_output = OPTS.dump_output
     CFG.quick = OPTS.quick
     CFG.start = OPTS.start
+    CFG.base_data = OPTS.base_data
 
     # Apply color mode (IS_TTY controls cursor-based footer, USE_COLORS controls ANSI colors)
     global USE_COLORS, RED, GREEN, YELLOW, CYAN, DIM, NC
