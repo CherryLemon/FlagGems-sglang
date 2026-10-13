@@ -234,7 +234,9 @@ def parse_env():
     lines.append(f"<tr><td>Torch</td><td><tt>{torch_ver}</tt></td></tr>")
     lines.append(f"<tr><td>FlagTree</td><td><tt>{flagtree_ver}</tt></td></tr>")
     lines.append(f"<tr><td>Triton</td><td><tt>{triton_ver}</tt></td></tr>")
-    lines.append(f"<tr><td>FlagGems-sglang</td><td><tt>{flaggems_ver}</tt></td></tr>")
+    lines.append(
+        f"<tr><td>FlagGems-sglang</td><td><tt>{flaggems_ver}</tt></td></tr>"
+    )
     lines.append(
         f"<tr><td>Vendor</td><td><tt>{flaggems_vendor}</tt></td></tr>"
     )
