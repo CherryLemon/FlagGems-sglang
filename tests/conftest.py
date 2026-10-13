@@ -25,6 +25,10 @@ import pytest
 import yaml
 
 import flaggems_sglang
+from flaggems_sglang.cli_override import (
+    add_override_arguments,
+    apply_overrides_from_args,
+)
 
 BUILTIN_MARKS = {
     "filterwarnings",
@@ -95,6 +99,9 @@ def pytest_addoption(parser):
     except ValueError:
         pass
 
+    # Add dynamic operator override options
+    add_override_arguments(parser)
+
 
 def pytest_configure(config):
     global RECORD_LOG
@@ -133,6 +140,15 @@ def pytest_configure(config):
             level=logging.INFO,
             format="[%(levelname)s] %(message)s",
         )
+
+    # Apply dynamic operator overrides
+    config._override_registry = apply_overrides_from_args(config.option)
+
+
+def pytest_unconfigure(config):
+    """Cleanup: restore all overridden operators."""
+    if hasattr(config, "_override_registry"):
+        config._override_registry.restore_all()
 
 
 def pytest_runtest_teardown(item, nextitem):
