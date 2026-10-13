@@ -118,6 +118,8 @@ def model_shapes():
 
 @dataclass
 class BenchmarkMetrics:
+    # Stable workload identity for case listing/replay (None in legacy runs).
+    case_id: Optional[str] = None
     # Legacy shape information for backward compatibility
     # This field corresponds to the 'size' field in
     # the previous version's benchmark.
@@ -140,6 +142,9 @@ class BenchmarkMetrics:
     utilization: Optional[float] = None
     # Speedup compared to base data
     compared_speedup: Optional[float] = None
+    # Which implementation was timed as the candidate ("override" when a
+    # dynamically injected candidate was invoked); None for the default path.
+    candidate_source: Optional[str] = None
     # Error message
     error_msg: Optional[str] = None
 
@@ -147,8 +152,10 @@ class BenchmarkMetrics:
 ALL_AVAILABLE_METRICS = set(
     map(lambda x: x.name, fields(BenchmarkMetrics))
 ) - {
+    "case_id",
     "legacy_shape",
     "shape_detail",
+    "candidate_source",
 }
 
 DEFAULT_METRICS = [
