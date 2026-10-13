@@ -18,16 +18,7 @@ import json
 import os
 import time
 from contextlib import nullcontext
-from dataclasses import asdict
-from typing import (
-    Any,
-    Callable,
-    Collection,
-    Generator,
-    List,
-    Optional,
-    Tuple,
-)
+from typing import Any, Callable, Collection, Generator, List, Optional, Tuple
 
 import pytest
 import torch
@@ -49,6 +40,8 @@ from .attri_util import (
     BenchMode,
     OperationAttribute,
     check_metric_dependencies,
+    lookup_base_record_ex,
+    lookup_scaling_factor,
 )
 from .cases import BenchmarkCaseList, BenchmarkCasePlan, BenchmarkCaseSpec
 from .conftest import (
@@ -614,7 +607,7 @@ class Benchmark:
         update_result(self.op_name, json.loads(result_json))
         return result
 
-    def _measure_input(self, input, case_id=None):
+    def _measure_input(self, input, case_id=None, dtype=None):
         metric = BenchmarkMetrics(case_id=case_id)
         try:
             args, kwargs = self.unpack_to_args_kwargs(input)
@@ -634,6 +627,11 @@ class Benchmark:
                     )
             if "speedup" in self.to_bench_metrics:
                 metric.speedup = metric.latency_base / metric.latency
+            if (
+                getattr(Config, "base_data", None) is not None
+                and metric.latency
+            ):
+                self._compare_against_base(metric, dtype)
             if "gbps" in self.to_bench_metrics:
                 metric.gbps_base = self.get_gbps(
                     args, latency=metric.latency_base
@@ -654,12 +652,52 @@ class Benchmark:
             gc.collect()
         return metric
 
+    def _compare_against_base(self, metric, dtype):
+        """Fill in the optional 'vs Base' speedup from the --base-data
+        baseline. On a miss, record the precise reason. No-op unless
+        --base-data was supplied (see conftest._load_base_data)."""
+        base_rec, miss_reason = lookup_base_record_ex(
+            Config.base_data,
+            self.op_name,
+            dtype,
+            metric.shape_detail,
+        )
+        base_ms = base_rec.get("latency_ms") if base_rec else None
+        if base_ms is not None:
+            # Both baseline (latency_ms) and metric.latency are in
+            # milliseconds, so the raw ratio is dimensionless. Divide by this
+            # chip's scaling factor for the baseline's bottleneck resource to
+            # normalize away the hardware peak gap; missing factor -> keep the
+            # raw ratio.
+            speedup = base_ms / metric.latency
+            factor = lookup_scaling_factor(
+                Config.base_data,
+                vendor_name,
+                base_rec.get("bottle_neck_unit"),
+                dtype,
+            )
+            if factor:
+                speedup /= factor
+            metric.compared_speedup = speedup
+            print(
+                f"[vs Base] {self.op_name} "
+                f"shape={metric.shape_detail} "
+                f"base={base_ms:.6f}ms "
+                f"gems={metric.latency:.6f}ms "
+                f"factor={factor} vs_base={speedup:.3f}"
+            )
+        else:
+            # No baseline match: record and print the precise reason
+            # (op / shape / dtype missing) so it can be aggregated later.
+            metric.base_miss_reason = miss_reason
+            print(f"[vs Base][未匹配] {miss_reason}")
+
     def _run_legacy(self):
         results = []
         for dtype in self.to_bench_dtypes:
             metrics = []
             for input in self.get_input_iter(dtype):
-                metrics.append(self._measure_input(input))
+                metrics.append(self._measure_input(input, dtype=dtype))
             results.append(self._emit_result(dtype, metrics))
         return results
 
@@ -689,7 +727,9 @@ class Benchmark:
                     )
                     pytest.fail(str(e))
                 metrics.append(
-                    self._measure_input(input, case_id=case.case_id)
+                    self._measure_input(
+                        input, case_id=case.case_id, dtype=dtype
+                    )
                 )
                 executed.append(case.case_id)
             if metrics:

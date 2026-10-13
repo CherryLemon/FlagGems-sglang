@@ -121,7 +121,9 @@ def test_selected_case_materializes_exactly_once(monkeypatch):
     monkeypatch.setattr(
         benchmark,
         "_measure_input",
-        lambda input, case_id=None: consts.BenchmarkMetrics(case_id=case_id),
+        lambda input, case_id=None, dtype=None: consts.BenchmarkMetrics(
+            case_id=case_id
+        ),
     )
     monkeypatch.setattr(
         benchmark, "_emit_result", lambda dtype, metrics: (dtype, metrics)
@@ -193,7 +195,9 @@ def test_full_run_preserves_planned_case_order(monkeypatch):
     monkeypatch.setattr(
         benchmark,
         "_measure_input",
-        lambda input, case_id=None: consts.BenchmarkMetrics(case_id=case_id),
+        lambda input, case_id=None, dtype=None: consts.BenchmarkMetrics(
+            case_id=case_id
+        ),
     )
     monkeypatch.setattr(
         benchmark, "_emit_result", lambda dtype, metrics: (dtype, metrics)
