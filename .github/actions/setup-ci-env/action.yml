@@ -31,23 +31,31 @@ inputs:
     default: "1"
   base-python:
     description: >-
-      Interpreter to build the environment on top of. Leave empty to use
-      whatever `python`/`python3` resolves to, which is right whenever the
-      vendor torch and Triton build live in the base image.
+      Interpreter to build the environment on top of. Normally leave this
+      empty, including on a runner whose vendor torch and Triton build live in
+      a venv rather than in the base image: when nothing on PATH has torch,
+      the script searches torch-search-roots for the interpreter that owns a
+      torch install and builds on that. Its packages then become visible (see
+      the system-site-packages note below) while the installs still land in
+      this action's own environment, leaving the runner's venv untouched.
 
-      Set it where they do not. On a runner that ships them inside a venv of
-      its own, `python3` on PATH is the bare system interpreter and has no
-      torch, so the environment created here would layer on top of nothing and
-      every test would fail at `import torch`. Pointing this at that venv's
-      interpreter makes its packages visible (see the system-site-packages
-      note below) while the installs still land in this action's own
-      environment, leaving the runner's venv untouched.
-
-      Accepts a space-separated list of candidates, and then builds on the
-      first one that has torch. Prefer a list over a single path on a
-      self-hosted runner: the vendor runtime there is reprovisioned without
-      reference to this repo, and a list keeps the job working across a move
-      instead of failing on a path that no longer exists.
+      Set it only to override that choice — to pin one specific interpreter on
+      a machine with several, or to name a runtime outside the search roots. A
+      space-separated list is accepted, and then the first candidate that has
+      torch wins. Prefer widening torch-search-roots over hardcoding a path:
+      the vendor runtime on a self-hosted runner is reprovisioned without
+      reference to this repo, so a path here goes stale on its own schedule.
+    required: false
+    default: ""
+  torch-search-roots:
+    description: >-
+      Space-separated directories to search for the interpreter owning the
+      vendor torch, used when none on PATH has it. Leave empty for the
+      script's default ($HOME /opt /usr/local), which covers the usual places
+      a vendor image or a FlagGems checkout puts its venv. The search stays on
+      one filesystem and is time-boxed per root, so a miss costs a bounded
+      wait and a warning rather than a hung job. Only runs when require-torch
+      is 1, where a missing torch is fatal anyway.
     required: false
     default: ""
   virtual-env:
@@ -184,6 +192,7 @@ runs:
         INSTALL_TRITON_KERNELS: ${{ inputs.install-triton-kernels }}
         REQUIRE_PROJECT: ${{ inputs.require-project }}
         REQUIRE_TORCH: ${{ inputs.require-torch }}
+        TORCH_SEARCH_ROOTS: ${{ inputs.torch-search-roots }}
         COLLECT_TESTS: ${{ inputs.collect-tests }}
         # Pruning only pays off when the cache is uploaded afterwards. Where it
         # just stays on the runner's disk, uv manages it fine on its own.

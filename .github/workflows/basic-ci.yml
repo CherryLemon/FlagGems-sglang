@@ -209,7 +209,7 @@ jobs:
         run: echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
 
       # setup-ci-env creates and populates the environment itself; the
-      # runner's venv below is only read, as the source of the vendor runtime.
+      # runner's own venv is only read, as the source of the vendor runtime.
       - name: prepare ci environment
         uses: ./.github/actions/setup-ci-env
         with:
@@ -217,23 +217,16 @@ jobs:
           # that this environment layers on top of belongs to the runner, and
           # a freshly installed interpreter would not see it.
           setup-python: "0"
-          # On h20 that build lives in a venv, not in the base image, so
-          # `python3` on PATH is the bare system interpreter with no torch.
-          # Build on the venv's interpreter instead and inherit its packages;
-          # the installs still go into the action's own environment, so these
-          # paths are only ever read from.
+          # No base-python: on h20 that build lives in a venv rather than in
+          # the base image, and the path to it is reprovisioned without
+          # reference to this repo — it has already moved once, from
+          # /home/secure/venvs to the FlagGems checkout. So let the script find
+          # the interpreter that owns torch instead of naming one here, and the
+          # next move costs nothing.
           #
-          # Several candidates because the runner's runtime is reprovisioned
-          # independently of this repo — it has already moved once, from
-          # /home/secure/venvs to the FlagGems checkout. The first candidate
-          # that has torch wins, so a move only costs a line here instead of a
-          # red CI run.
-          base-python: >-
-            /home/secure/FlagGems/.venv/bin/python
-            /home/secure/venvs/flaggems-sglang-ci/bin/python
-          # With the line above there is a torch to find, so require it.
-          # Without it the job would get all the way to the first test before
-          # failing, once per selected file.
+          # The runner provides torch, so require it. Without this the job
+          # would get all the way to the first test before failing, once per
+          # selected file.
           require-torch: "1"
           # The job runs the real suite right after, so the collection smoke
           # check would only repeat work.

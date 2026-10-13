@@ -40,13 +40,20 @@
 #
 # Environment:
 #   PYTHON_BIN             interpreter to build the environment from
-#                          (default: python, then python3). May be a
-#                          space-separated list of candidates, in which case
-#                          the first one that can `import torch` is used; it
-#                          is validated rather than silently falling back.
-#                          Set this to the interpreter owning the vendor
-#                          torch/Triton build when that is not the one on
-#                          PATH.
+#                          (default: python, then python3, then whichever
+#                          interpreter on this machine owns a torch install).
+#                          May be a space-separated list of candidates, in
+#                          which case the first one that can `import torch`
+#                          wins. Normally leave it unset: the search below
+#                          finds the vendor runtime wherever it currently is.
+#   TORCH_SEARCH           1 to search the filesystem for the interpreter
+#                          owning torch when none on PATH has it, 0 to skip
+#                          the search (default: REQUIRE_TORCH, so the search
+#                          only costs time where torch is actually needed)
+#   TORCH_SEARCH_ROOTS     space-separated directories to search
+#                          (default: $HOME /opt /usr/local)
+#   TORCH_SEARCH_DEPTH     find -maxdepth for that search (default: 8)
+#   TORCH_SEARCH_TIMEOUT   seconds allowed per root (default: 120)
 #   UV_VERSION             uv version to install when uv is absent
 #   VENV_PATH              venv to create and install into (default:
 #                          ~/.cache/flaggems-sglang-ci/venv), or "none" to
@@ -125,6 +132,15 @@ TRITON_KERNELS_URL="${TRITON_KERNELS_URL:-triton_kernels @ git+${TRITON_REPO}@${
 
 REQUIRE_PROJECT="${REQUIRE_PROJECT:-1}"
 REQUIRE_TORCH="${REQUIRE_TORCH:-0}"
+# Searching the filesystem is only worth its time where a missing torch is
+# fatal anyway, so this follows REQUIRE_TORCH unless set explicitly.
+TORCH_SEARCH="${TORCH_SEARCH:-${REQUIRE_TORCH}}"
+TORCH_SEARCH_ROOTS="${TORCH_SEARCH_ROOTS:-${HOME} /opt /usr/local}"
+# A venv's torch sits 7 levels below the root it lives in
+# (<venv>/lib/python3.X/site-packages/torch/version.py), so 8 leaves one level
+# of nesting spare while keeping the walk shallow.
+TORCH_SEARCH_DEPTH="${TORCH_SEARCH_DEPTH:-8}"
+TORCH_SEARCH_TIMEOUT="${TORCH_SEARCH_TIMEOUT:-120}"
 COLLECT_TESTS="${COLLECT_TESTS:-1}"
 PRUNE_UV_CACHE="${PRUNE_UV_CACHE:-1}"
 
@@ -218,61 +234,124 @@ fi
 # Inside an activated venv (or after actions/setup-python) `python` is the
 # right interpreter; fall back to python3 on bare systems.
 #
-# Whoever sets PYTHON_BIN explicitly is usually pointing at the one
-# interpreter that owns the vendor torch and Triton build, so a typo or a
-# since-renamed path must not degrade silently to the system python: the
-# environment would then layer on top of nothing and every test would fail at
-# `import torch`, far from the cause.
+# Where the vendor torch lives in a venv of its own instead — which is how
+# accelerator runners commonly ship it — neither of those has torch, and an
+# environment layered on top of nothing fails at `import torch` in every test,
+# far from the cause. The path to that venv is not ours to hardcode: it is
+# reprovisioned without reference to this repo, and has already moved once on
+# h20. So locate it by what interpreters actually contain. In order:
 #
-# Such a path is also not ours to depend on. The vendor runtime on a
-# self-hosted runner gets moved and reprovisioned without reference to this
-# repo, so PYTHON_BIN accepts a list and the choice is made by what the
-# interpreters actually contain: the first candidate with an importable torch
-# wins. A single value behaves exactly as before.
+#   1. the PYTHON_BIN candidates, if any were given
+#   2. python, then python3 from PATH
+#   3. a filesystem search for an interpreter that owns a torch install
+#
+# The first candidate with an importable torch wins. Setting PYTHON_BIN
+# remains supported and skips the search when it finds torch, but is no longer
+# needed: step 3 covers a runtime that moved.
+#
+# Collect the interpreters to try, in preference order. A single PYTHON_BIN
+# value still behaves exactly as before.
+_explicit=0
+_candidates=()
 if [ -n "${PYTHON_BIN:-}" ]; then
+  _explicit=1
   read -r -a _candidates <<<"${PYTHON_BIN}"
-  _usable=()
-  _with_torch=""
-  for _candidate in "${_candidates[@]}"; do
-    command -v "${_candidate}" &>/dev/null || continue
-    _usable+=("${_candidate}")
-    if [ -z "${_with_torch}" ] &&
-       "${_candidate}" -c "import torch" >/dev/null 2>&1; then
-      _with_torch="${_candidate}"
-    fi
-  done
-
-  if [ "${#_usable[@]}" -eq 0 ]; then
-    echo "::error::none of the PYTHON_BIN candidates is an executable \
-interpreter: ${PYTHON_BIN}"
-    exit 1
-  fi
-
-  if [ -n "${_with_torch}" ]; then
-    PYTHON_BIN="${_with_torch}"
-    if [ "${#_candidates[@]}" -gt 1 ]; then
-      printf "Building on %s, the first candidate that has torch.\n" \
-        "${PYTHON_BIN}"
-    fi
-  else
-    # No candidate has torch. Still build on the first usable one and let the
-    # REQUIRE_TORCH check below decide whether that is fatal, so the failure
-    # names the missing runtime rather than a path.
-    PYTHON_BIN="${_usable[0]}"
-    warn "none of the PYTHON_BIN candidates has torch installed \
-(${PYTHON_BIN} chosen); the vendor runtime may have moved"
-  fi
-  unset _candidates _usable _with_torch
 else
-  if command -v python &>/dev/null; then
-    PYTHON_BIN="python"
-  elif command -v python3 &>/dev/null; then
-    PYTHON_BIN="python3"
+  _candidates=(python python3)
+fi
+
+if [ "${#_candidates[@]}" -eq 0 ]; then
+  echo "::error::PYTHON_BIN is set but names no interpreter."
+  exit 1
+fi
+
+# Executable, and does it have torch? Keep both answers: a usable interpreter
+# without torch is still the right thing to build on when nothing has one.
+_usable=()
+_with_torch=""
+for _candidate in "${_candidates[@]}"; do
+  command -v "${_candidate}" &>/dev/null || continue
+  _usable+=("${_candidate}")
+  if [ -z "${_with_torch}" ] &&
+     "${_candidate}" -c "import torch" >/dev/null 2>&1; then
+    _with_torch="${_candidate}"
+  fi
+done
+
+if [ "${_explicit}" = "1" ] && [ "${#_usable[@]}" -eq 0 ]; then
+  echo "::error::none of the PYTHON_BIN candidates is an executable \
+interpreter: ${PYTHON_BIN}"
+  exit 1
+fi
+
+# Nothing on PATH has torch. Find the interpreter that owns one, rather than
+# proceeding on an interpreter we already know cannot work. The search looks
+# for torch/version.py — present in every torch install, cheap to match on
+# name — and derives the interpreter from its site-packages: four levels up
+# from the package is the venv root, whose bin/python is the interpreter that
+# owns that torch. -xdev keeps the walk off network and container mounts, and
+# each root is time-boxed, so a slow or huge filesystem costs a bounded wait
+# and a warning rather than a hung job.
+find_torch_python() {
+  local root package prefix python
+  for root in ${TORCH_SEARCH_ROOTS}; do
+    [ -d "${root}" ] || continue
+    while IFS= read -r package; do
+      [ -n "${package}" ] || continue
+      # .../<prefix>/lib/python3.X/site-packages/torch/version.py
+      prefix="$(cd "$(dirname "${package}")/../../../.." && pwd)" || continue
+      python="${prefix}/bin/python"
+      [ -x "${python}" ] || python="${prefix}/bin/python3"
+      [ -x "${python}" ] || continue
+      if "${python}" -c "import torch" >/dev/null 2>&1; then
+        printf '%s\n' "${python}"
+        return 0
+      fi
+    done < <(timeout "${TORCH_SEARCH_TIMEOUT}" find "${root}" -xdev \
+      -maxdepth "${TORCH_SEARCH_DEPTH}" -path '*/torch/version.py' -print \
+      2>/dev/null || true)
+  done
+  return 1
+}
+
+if [ -z "${_with_torch}" ] && [ "${TORCH_SEARCH}" = "1" ]; then
+  if ! command -v timeout &>/dev/null; then
+    warn "timeout(1) not found; skipping the search for the vendor torch"
   else
-    echo "::error::no python interpreter on PATH."
-    exit 1
+    printf "No interpreter on PATH has torch; searching %s ...\n" \
+      "${TORCH_SEARCH_ROOTS}"
+    if _found="$(find_torch_python)"; then
+      _with_torch="${_found}"
+      printf "Found torch under %s\n" "${_with_torch}"
+    else
+      warn "no interpreter owning a torch install found under \
+${TORCH_SEARCH_ROOTS}"
+    fi
+    unset _found
   fi
 fi
+
+if [ -n "${_with_torch}" ]; then
+  # Name the choice whenever there was one to make, so the log says which
+  # runtime this environment ended up on top of.
+  if [ "${_explicit}" != "1" ] || [ "${#_candidates[@]}" -gt 1 ]; then
+    printf "Building on %s, which has torch.\n" "${_with_torch}"
+  fi
+  PYTHON_BIN="${_with_torch}"
+elif [ "${#_usable[@]}" -gt 0 ]; then
+  # Nothing has torch. Still build on the first usable interpreter and let the
+  # REQUIRE_TORCH check below decide whether that is fatal, so the failure
+  # names the missing runtime rather than a path.
+  PYTHON_BIN="${_usable[0]}"
+  if [ "${TORCH_SEARCH}" = "1" ]; then
+    warn "building on ${PYTHON_BIN}, which has no torch; the vendor runtime \
+may have moved"
+  fi
+else
+  echo "::error::no python interpreter on PATH."
+  exit 1
+fi
+unset _candidates _usable _with_torch _candidate _explicit
 PYTHON_BIN="$(command -v "${PYTHON_BIN}" || echo "${PYTHON_BIN}")"
 export PYTHON_BIN
 
@@ -915,11 +994,13 @@ if [ "${REQUIRE_TORCH}" = "1" ]; then
     printf "\n%s\n" "${TORCH_OUT}"
     # torch is never installed by this script: it belongs to the runner. So
     # this means the environment was built on an interpreter that cannot see
-    # it, which is the base-python choice rather than anything installed here.
-    echo "::error::torch is not importable from ${PYTHON_BIN}. This \
-environment layers on top of the runner's torch rather than installing one, \
-so point PYTHON_BIN (the action's base-python input) at the interpreter that \
-owns the vendor torch build."
+    # it, and the search above found no interpreter that can.
+    echo "::error::torch is not importable from ${PYTHON_BIN}, and no \
+interpreter owning a torch install was found under ${TORCH_SEARCH_ROOTS}. \
+This environment layers on top of the runner's torch rather than installing \
+one. Either the runner is missing its vendor runtime, or that runtime lives \
+outside those roots — widen TORCH_SEARCH_ROOTS, or name the interpreter \
+through PYTHON_BIN (the action's base-python input)."
     fail
   fi
   printf " %s" "${TORCH_OUT}"
