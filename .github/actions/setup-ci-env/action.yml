@@ -42,6 +42,12 @@ inputs:
       interpreter makes its packages visible (see the system-site-packages
       note below) while the installs still land in this action's own
       environment, leaving the runner's venv untouched.
+
+      Accepts a space-separated list of candidates, and then builds on the
+      first one that has torch. Prefer a list over a single path on a
+      self-hosted runner: the vendor runtime there is reprovisioned without
+      reference to this repo, and a list keeps the job working across a move
+      instead of failing on a path that no longer exists.
     required: false
     default: ""
   virtual-env:

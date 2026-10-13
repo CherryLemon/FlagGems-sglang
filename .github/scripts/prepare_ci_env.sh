@@ -40,10 +40,13 @@
 #
 # Environment:
 #   PYTHON_BIN             interpreter to build the environment from
-#                          (default: python, then python3). Set this to the
-#                          interpreter owning the vendor torch/Triton build
-#                          when that is not the one on PATH; it is validated
-#                          rather than silently falling back.
+#                          (default: python, then python3). May be a
+#                          space-separated list of candidates, in which case
+#                          the first one that can `import torch` is used; it
+#                          is validated rather than silently falling back.
+#                          Set this to the interpreter owning the vendor
+#                          torch/Triton build when that is not the one on
+#                          PATH.
 #   UV_VERSION             uv version to install when uv is absent
 #   VENV_PATH              venv to create and install into (default:
 #                          ~/.cache/flaggems-sglang-ci/venv), or "none" to
@@ -220,11 +223,46 @@ fi
 # since-renamed path must not degrade silently to the system python: the
 # environment would then layer on top of nothing and every test would fail at
 # `import torch`, far from the cause.
+#
+# Such a path is also not ours to depend on. The vendor runtime on a
+# self-hosted runner gets moved and reprovisioned without reference to this
+# repo, so PYTHON_BIN accepts a list and the choice is made by what the
+# interpreters actually contain: the first candidate with an importable torch
+# wins. A single value behaves exactly as before.
 if [ -n "${PYTHON_BIN:-}" ]; then
-  if ! command -v "${PYTHON_BIN}" &>/dev/null; then
-    echo "::error::PYTHON_BIN='${PYTHON_BIN}' is not an executable interpreter."
+  read -r -a _candidates <<<"${PYTHON_BIN}"
+  _usable=()
+  _with_torch=""
+  for _candidate in "${_candidates[@]}"; do
+    command -v "${_candidate}" &>/dev/null || continue
+    _usable+=("${_candidate}")
+    if [ -z "${_with_torch}" ] &&
+       "${_candidate}" -c "import torch" >/dev/null 2>&1; then
+      _with_torch="${_candidate}"
+    fi
+  done
+
+  if [ "${#_usable[@]}" -eq 0 ]; then
+    echo "::error::none of the PYTHON_BIN candidates is an executable \
+interpreter: ${PYTHON_BIN}"
     exit 1
   fi
+
+  if [ -n "${_with_torch}" ]; then
+    PYTHON_BIN="${_with_torch}"
+    if [ "${#_candidates[@]}" -gt 1 ]; then
+      printf "Building on %s, the first candidate that has torch.\n" \
+        "${PYTHON_BIN}"
+    fi
+  else
+    # No candidate has torch. Still build on the first usable one and let the
+    # REQUIRE_TORCH check below decide whether that is fatal, so the failure
+    # names the missing runtime rather than a path.
+    PYTHON_BIN="${_usable[0]}"
+    warn "none of the PYTHON_BIN candidates has torch installed \
+(${PYTHON_BIN} chosen); the vendor runtime may have moved"
+  fi
+  unset _candidates _usable _with_torch
 else
   if command -v python &>/dev/null; then
     PYTHON_BIN="python"

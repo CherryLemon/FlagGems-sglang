@@ -217,12 +217,20 @@ jobs:
           # that this environment layers on top of belongs to the runner, and
           # a freshly installed interpreter would not see it.
           setup-python: "0"
-          # On h20 that build lives in this venv, not in the base image, so
+          # On h20 that build lives in a venv, not in the base image, so
           # `python3` on PATH is the bare system interpreter with no torch.
           # Build on the venv's interpreter instead and inherit its packages;
-          # the installs still go into the action's own environment, so this
-          # path is only ever read from.
-          base-python: /home/secure/venvs/flaggems-sglang-ci/bin/python
+          # the installs still go into the action's own environment, so these
+          # paths are only ever read from.
+          #
+          # Several candidates because the runner's runtime is reprovisioned
+          # independently of this repo — it has already moved once, from
+          # /home/secure/venvs to the FlagGems checkout. The first candidate
+          # that has torch wins, so a move only costs a line here instead of a
+          # red CI run.
+          base-python: >-
+            /home/secure/FlagGems/.venv/bin/python
+            /home/secure/venvs/flaggems-sglang-ci/bin/python
           # With the line above there is a torch to find, so require it.
           # Without it the job would get all the way to the first test before
           # failing, once per selected file.
