@@ -29,6 +29,21 @@ inputs:
       base-image interpreter owns the vendor torch/Triton build.
     required: false
     default: "1"
+  base-python:
+    description: >-
+      Interpreter to build the environment on top of. Leave empty to use
+      whatever `python`/`python3` resolves to, which is right whenever the
+      vendor torch and Triton build live in the base image.
+
+      Set it where they do not. On a runner that ships them inside a venv of
+      its own, `python3` on PATH is the bare system interpreter and has no
+      torch, so the environment created here would layer on top of nothing and
+      every test would fail at `import torch`. Pointing this at that venv's
+      interpreter makes its packages visible (see the system-site-packages
+      note below) while the installs still land in this action's own
+      environment, leaving the runner's venv untouched.
+    required: false
+    default: ""
   virtual-env:
     description: >-
       Path of the virtualenv to create and install into. Leave empty for the
@@ -69,6 +84,14 @@ inputs:
       0 on runners without a supported accelerator.
     required: false
     default: "1"
+  require-torch:
+    description: >-
+      Require `import torch` to succeed during verification (1), or only
+      report whether it is importable (0). Turn this on wherever the runner is
+      supposed to provide torch: it turns a missing vendor runtime into one
+      clear setup failure instead of an error in every test that follows.
+    required: false
+    default: "0"
   collect-tests:
     description: "Run `pytest --collect-only` as a smoke check (1) or skip (0)"
     required: false
@@ -145,6 +168,7 @@ runs:
       shell: bash
       env:
         UV_VERSION: ${{ inputs.uv-version }}
+        PYTHON_BIN: ${{ inputs.base-python }}
         VENV_PATH: ${{ inputs.virtual-env }}
         VENV_SYSTEM_SITE_PACKAGES: ${{ inputs.system-site-packages }}
         VENV_REUSE: ${{ inputs.reuse-env }}
@@ -153,6 +177,7 @@ runs:
         INSTALL_SGLANG: ${{ inputs.install-sglang }}
         INSTALL_TRITON_KERNELS: ${{ inputs.install-triton-kernels }}
         REQUIRE_PROJECT: ${{ inputs.require-project }}
+        REQUIRE_TORCH: ${{ inputs.require-torch }}
         COLLECT_TESTS: ${{ inputs.collect-tests }}
         # Pruning only pays off when the cache is uploaded afterwards. Where it
         # just stays on the runner's disk, uv manages it fine on its own.

@@ -40,7 +40,10 @@
 #
 # Environment:
 #   PYTHON_BIN             interpreter to build the environment from
-#                          (default: python)
+#                          (default: python, then python3). Set this to the
+#                          interpreter owning the vendor torch/Triton build
+#                          when that is not the one on PATH; it is validated
+#                          rather than silently falling back.
 #   UV_VERSION             uv version to install when uv is absent
 #   VENV_PATH              venv to create and install into (default:
 #                          ~/.cache/flaggems-sglang-ci/venv), or "none" to
@@ -132,6 +135,18 @@ PRUNE_UV_CACHE="${PRUNE_UV_CACHE:-1}"
 # path. sglang declares the latter two behind aarch64 environment markers,
 # which sglang_safe_deps.py strips — without excluding them here they would be
 # installed unconditionally on x86 too.
+#
+# kernels is excluded for a different reason than the rest: it registers an
+# `egg_info.writers` entry point (kernels.lockfile:write_egg_lockfile), and
+# setuptools loads every entry point in that group during *any* metadata or
+# editable build in the environment. The filtered sglang set is installed with
+# --no-deps, so kernels lands without kernels_data, huggingface-hub or
+# tomlkit; `import kernels` then raises ModuleNotFoundError and takes every
+# later source build in this environment down with it — including this repo's
+# own editable install, which is why the breakage shows up in a step that has
+# nothing to do with sglang. sglang only imports kernels lazily, inside the
+# FlashAttention-v3 Hub loader, a path this repo never takes: it uses sglang
+# purely as a source of reference implementations.
 SGLANG_DEFAULT_EXCLUDES=(
   # NVIDIA-only binary wheels
   sglang-kernel
@@ -146,6 +161,8 @@ SGLANG_DEFAULT_EXCLUDES=(
   torchcodec
   av
   decord2
+  # hooks setuptools' build; see above
+  kernels
 )
 
 # ── Repository root ──────────────────────────────────────────
@@ -197,7 +214,18 @@ fi
 # ── Python interpreter ───────────────────────────────────────
 # Inside an activated venv (or after actions/setup-python) `python` is the
 # right interpreter; fall back to python3 on bare systems.
-if [ -z "${PYTHON_BIN:-}" ]; then
+#
+# Whoever sets PYTHON_BIN explicitly is usually pointing at the one
+# interpreter that owns the vendor torch and Triton build, so a typo or a
+# since-renamed path must not degrade silently to the system python: the
+# environment would then layer on top of nothing and every test would fail at
+# `import torch`, far from the cause.
+if [ -n "${PYTHON_BIN:-}" ]; then
+  if ! command -v "${PYTHON_BIN}" &>/dev/null; then
+    echo "::error::PYTHON_BIN='${PYTHON_BIN}' is not an executable interpreter."
+    exit 1
+  fi
+else
   if command -v python &>/dev/null; then
     PYTHON_BIN="python"
   elif command -v python3 &>/dev/null; then
@@ -332,12 +360,18 @@ if sys.prefix == sys.base_prefix:
 for path in sorted(path for path in paths if path):
     print(path)
 PY
+    TARGET_SITE="$("${PYTHON_BIN}" -c \
+      'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
     if [ -s "${BASE_SITES}" ]; then
-      TARGET_SITE="$("${PYTHON_BIN}" -c \
-        'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
       cp "${BASE_SITES}" "${TARGET_SITE}/_ci_base_site_packages.pth"
       printf "Inheriting site-packages from %s:\n" "${BASE_PYTHON}"
       sed 's/^/  /' "${BASE_SITES}"
+    else
+      # Nothing to inherit. Drop a .pth an earlier run may have left behind:
+      # a reused venv keeps it otherwise, and it would go on adding a base
+      # interpreter's site-packages that is no longer the one we build on —
+      # quietly shadowing this environment from a directory nobody mentions.
+      rm -f "${TARGET_SITE}/_ci_base_site_packages.pth"
     fi
     rm -f "${BASE_SITES}"
   fi
@@ -457,6 +491,80 @@ uv_pip install -q \
   || fail
 ok
 
+# ── Build-time entry point guard ─────────────────────────────
+# setuptools loads every entry point registered in egg_info.writers,
+# distutils.commands, distutils.setup_keywords and setuptools.file_finders on
+# each metadata or editable build. A package in one of those groups that
+# cannot be imported therefore breaks every source build in the environment,
+# with a traceback that points at the project being built rather than at the
+# package at fault.
+#
+# That is not hypothetical here: the filtered sglang set goes in with
+# --no-deps, so a dependency of a dependency can land without its own imports
+# satisfied. The excludes above keep the known offender (kernels) out, but a
+# future sglang release can add another one, and on a persistent runner a venv
+# poisoned by an earlier run is reused rather than rebuilt. Uninstall whatever
+# is broken instead of letting the next build fail: these packages are
+# reference-only here, so removing one costs nothing, while a wedged venv
+# costs the whole job and is reused until someone clears it by hand.
+#
+# Run this before every source build below, and again after the installs that
+# can introduce such a package.
+prune_broken_build_hooks() {
+  local removed
+  removed="$("${PYTHON_BIN}" - <<'PY' 2>/dev/null || true
+import importlib
+import importlib.metadata as md
+
+# The groups setuptools itself loads during a build.
+GROUPS = {
+    "egg_info.writers",
+    "distutils.commands",
+    "distutils.setup_keywords",
+    "setuptools.file_finders",
+}
+
+broken = {}
+for dist in md.distributions():
+    name = dist.metadata["Name"]
+    if not name:
+        continue
+    for entry in dist.entry_points:
+        if entry.group not in GROUPS:
+            continue
+        module = entry.value.split(":")[0].split("=")[-1].strip()
+        try:
+            importlib.import_module(module)
+        except ImportError as exc:
+            broken[name] = f"{entry.group}:{module}: {exc}"
+        except Exception:
+            # Imports fine but misbehaves for another reason; setuptools only
+            # needs the import to succeed, so leave it alone.
+            pass
+        break
+
+for name, reason in sorted(broken.items()):
+    print(f"{name}\t{reason}")
+PY
+)"
+
+  [ -n "${removed}" ] || return 0
+
+  printf "Removing packages whose setuptools build hook cannot import:\n"
+  printf '%s\n' "${removed}" | sed 's/^/  /'
+  # Uninstall by name; a failure here is not fatal on its own, the build that
+  # follows will report the real problem.
+  printf '%s\n' "${removed}" | cut -f1 | while read -r pkg; do
+    [ -n "${pkg}" ] || continue
+    uv_pip uninstall -q "${pkg}" >/dev/null 2>&1 ||
+      warn "could not uninstall ${pkg}"
+  done
+}
+
+printf "Checking build-time entry points ..."
+prune_broken_build_hooks
+ok
+
 # ── FlagGems-sglang and its test dependencies ────────────────
 if [ "${INSTALL_PROJECT}" = "1" ]; then
   step "FlagGems-sglang"
@@ -549,6 +657,13 @@ if [ "${INSTALL_SGLANG}" = "1" ]; then
       # torch or a CUDA runtime wheel back in.
       printf "Installing filtered sglang dependencies ..."
       uv_pip install -q --no-deps -r "${DEPS_FILE}" || fail
+      ok
+
+      # These went in with --no-deps, so this is where an unimportable build
+      # hook can appear. Catch it now rather than in whichever source build
+      # runs next — here or in a later job sharing this environment.
+      printf "Checking build-time entry points ..."
+      prune_broken_build_hooks
       ok
     else
       warn "Filtered dependency set is empty; installing sglang alone"
@@ -758,7 +873,18 @@ ok
 
 if [ "${REQUIRE_TORCH}" = "1" ]; then
   printf "torch importable ..."
-  "${PYTHON_BIN}" -c "import torch" >/dev/null 2>&1 || fail
+  if ! TORCH_OUT="$("${PYTHON_BIN}" -c "import torch; print(torch.__file__)" 2>&1)"; then
+    printf "\n%s\n" "${TORCH_OUT}"
+    # torch is never installed by this script: it belongs to the runner. So
+    # this means the environment was built on an interpreter that cannot see
+    # it, which is the base-python choice rather than anything installed here.
+    echo "::error::torch is not importable from ${PYTHON_BIN}. This \
+environment layers on top of the runner's torch rather than installing one, \
+so point PYTHON_BIN (the action's base-python input) at the interpreter that \
+owns the vendor torch build."
+    fail
+  fi
+  printf " %s" "${TORCH_OUT}"
   ok
 fi
 
