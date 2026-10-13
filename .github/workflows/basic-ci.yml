@@ -217,13 +217,6 @@ jobs:
           # that this environment layers on top of belongs to the runner, and
           # a freshly installed interpreter would not see it.
           setup-python: "0"
-          # No base-python: on h20 that build lives in a venv rather than in
-          # the base image, and the path to it is reprovisioned without
-          # reference to this repo — it has already moved once, from
-          # /home/secure/venvs to the FlagGems checkout. So let the script find
-          # the interpreter that owns torch instead of naming one here, and the
-          # next move costs nothing.
-          #
           # The runner provides torch, so require it. Without this the job
           # would get all the way to the first test before failing, once per
           # selected file.
