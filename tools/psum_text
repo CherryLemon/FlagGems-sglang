@@ -94,7 +94,7 @@ def parse_env():
         lines.append("| Env | Setting | Env | Setting |")
         lines.append("| --- | ------- | ----| --------|")
         lines.append(
-            f"| **Time** | `{timestamp}` | **FlagGems** | `{flaggems_ver}` |"
+            f"| **Time** | `{timestamp}` | **FlagGems-sglang** | `{flaggems_ver}` |"
         )
         lines.append(f"| **Arch** | `{arch}` | **OS** | `{os}` |")
         lines.append(f"| **Python** | `{pyver}` | **Torch** | `{torch_ver}` |")
