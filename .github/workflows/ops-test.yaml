@@ -352,7 +352,8 @@ jobs:
             --gpus "${AVAILABLE_GPUS}" \
             ${OP_ARGS} \
             --dump-output \
-            --output-dir "${OUTPUT_DIR}"
+            --output-dir "${OUTPUT_DIR}" \
+            --base-data tools/op_sglang_perf_baseline.json
           # process the test results to generate summary files
           python3 tools/add_labels.py ${OUTPUT_DIR}
           python3 tools/psum_text  -o  ${OUTPUT_DIR}/result.csv  ${OUTPUT_DIR}
