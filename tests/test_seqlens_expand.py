@@ -17,7 +17,6 @@
 import pytest
 import torch
 
-import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
 from . import conftest as cfg
@@ -55,11 +54,6 @@ def assert_close(actual, expected, *, dtype=None, **overrides):
 # ---------------------------------------------------------------------------
 # Cases (from kernel-comp-baseline/problems/attention/seqlens_expand/cases.py)
 # ---------------------------------------------------------------------------
-
-
-import torch
-
-from . import conftest as cfg
 
 
 def _case(n, max_q=8, seed=0, include_short_kv=True):

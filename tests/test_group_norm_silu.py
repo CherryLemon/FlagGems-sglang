@@ -17,7 +17,6 @@
 import pytest
 import torch
 
-import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
 from . import conftest as cfg
@@ -55,10 +54,6 @@ def assert_close(actual, expected, *, dtype=None, **overrides):
 # ---------------------------------------------------------------------------
 # Cases (from kernel-comp-baseline/problems/diffusion/group_norm_silu/cases.py)
 # ---------------------------------------------------------------------------
-
-import torch
-
-from . import conftest as cfg
 
 
 def _case(n, c, spatial, num_groups=32, eps=1e-5, seed=0):

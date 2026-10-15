@@ -16,7 +16,6 @@
 import pytest
 import torch
 
-import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
 from . import conftest as cfg
@@ -54,10 +53,6 @@ def assert_close(actual, expected, *, dtype=None, **overrides):
 # ---------------------------------------------------------------------------
 # Cases (from kernel-comp-baseline/problems/moe/deepep_permute/cases.py)
 # ---------------------------------------------------------------------------
-
-import torch
-
-from . import conftest as cfg
 
 
 def _case(num_tokens, topk=8, hidden=4096, seed=0):

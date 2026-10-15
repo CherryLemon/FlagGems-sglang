@@ -17,7 +17,6 @@
 import pytest
 import torch
 
-import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
 from . import conftest as cfg
@@ -55,11 +54,6 @@ def assert_close(actual, expected, *, dtype=None, **overrides):
 # ---------------------------------------------------------------------------
 # Cases (from kernel-comp-baseline/problems/activation_norm/fused_eh_norm/cases.py)
 # ---------------------------------------------------------------------------
-
-
-import torch
-
-from . import conftest as cfg
 
 
 def _rand(*shape, dtype=torch.bfloat16, seed=0):
