@@ -452,7 +452,9 @@ def _read_cann_version():
         info = Path(root) / "opp" / "version.info"
         if info.is_file():
             try:
-                m = re.search(r"^Version=([\w.]+)", info.read_text(), re.MULTILINE)
+                m = re.search(
+                    r"^Version=([\w.]+)", info.read_text(), re.MULTILINE
+                )
                 if m:
                     return m.group(1)
             except Exception:
@@ -495,7 +497,9 @@ def _read_ppu_version():
     yml = Path("/usr/local/PPU_SDK/release.yaml")
     if yml.is_file():
         try:
-            m = re.search(r"^version:\s*(\d+\.\d+\.\d+)", yml.read_text(), re.MULTILINE)
+            m = re.search(
+                r"^version:\s*(\d+\.\d+\.\d+)", yml.read_text(), re.MULTILINE
+            )
             if m:
                 return m.group(1)
         except Exception:
@@ -520,7 +524,10 @@ def _probe_sdk():
 
     # (display name, regex capturing the SDK version from the torch suffix)
     SDK_SUFFIX = (
-        ("COREX", r"corex\.?(\d+\.\d+\.\d+)"),  # iluvatar: 4.5.0.20260804 -> 4.5.0
+        (
+            "COREX",
+            r"corex\.?(\d+\.\d+\.\d+)",
+        ),  # iluvatar: 4.5.0.20260804 -> 4.5.0
         ("METAX", r"metax(\d+\.\d+\.\d+)"),  # metax:    3.8.1.0       -> 3.8.1
         ("MUSA", r"musa(\d+\.\d+\.\d+)"),  # mthreads: 5.2.0
         ("DTK", r"dtk(\d+)"),  # hygon:    2604
@@ -537,7 +544,10 @@ def _probe_sdk():
         vendor = ENV_INFO.get("flaggems_sglang", {}).get("vendor", "")
         if vendor == "ascend":
             name = "CANN"
-            version = os.environ.get("ASCEND_TOOLKIT_VERSION") or _read_cann_version()
+            version = (
+                os.environ.get("ASCEND_TOOLKIT_VERSION")
+                or _read_cann_version()
+            )
         elif vendor == "kunlunxin":
             name = "XRE"
             version = _read_xpu_version()
