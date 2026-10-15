@@ -64,4 +64,8 @@ pytest -q benchmark/test_silu_and_mul.py --level core --iter 1 --warmup 1
 - Most tests/benchmarks require a CUDA-capable GPU runtime.
 - `--collect-only` is recommended first to quickly check import and discovery.
 
+The opt-in [DeepSeek V4.1 H100 operators](docs/dsv41-h100-operators.md)
+include block-scaled FP8 GEMM, packed FP4 index scoring and exact mHC
+statistics/Sinkhorn fusion, with CUDA Graph tests and per-shape benchmarks.
+
 This project is licensed under the [Apache (version 2.0) License](./LICENSE).

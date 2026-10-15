@@ -53,6 +53,9 @@ test = [
 [project.urls]
 Homepage = "https://github.com/flagos-ai/FlagGems-sglang"
 
+[project.entry-points."sglang.srt.plugins"]
+flaggems_dsv41 = "flaggems_sglang_plugin:load_plugin"
+
 [tool.setuptools]
 package-dir = { "" = "src" }
 
