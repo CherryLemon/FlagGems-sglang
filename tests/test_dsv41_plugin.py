@@ -96,3 +96,146 @@ def test_unknown_source_fails_before_any_rebind(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="unreviewed SGLang"):
         p.install()
     assert module.sentinel is sentinel and p._handle is None
+
+
+def mock_reviewed_install(monkeypatch, tmp_path, plugin, *, abi=1):
+    import hashlib
+
+    def native(name):
+        return lambda *args, **kwargs: ("native", name)
+
+    modules = {}
+    groups = [
+        [
+            "fp4_index_logits_decode",
+            "fp4_index_logits_req_to_token",
+            "fp4_index_logits_candidate_blocks",
+        ],
+        ["w8a8_block_fp8_matmul_triton"],
+        ["hc_mix_stats", "hc_mix_stats_sinkhorn_exact", "hc_combine"],
+    ]
+    pins = {}
+    originals = {}
+    for i, (module_name, functions) in enumerate(
+        zip(plugin._SOURCE_PINS, groups)
+    ):
+        file = tmp_path / f"op{i}.py"
+        file.write_text(f"reviewed native source {i}")
+        module = types.ModuleType(module_name)
+        module.__file__ = str(file)
+        for name in functions:
+            fn = native(name)
+            originals[name] = fn
+            setattr(module, name, fn)
+        pins[module_name] = hashlib.sha256(file.read_bytes()).hexdigest()
+        modules[module_name] = module
+        monkeypatch.setitem(sys.modules, module_name, module)
+    monkeypatch.setattr(plugin, "_SOURCE_PINS", pins)
+    monkeypatch.setattr(
+        plugin.importlib, "import_module", lambda name: modules[name]
+    )
+    torch = types.ModuleType("torch")
+    torch.cuda = types.SimpleNamespace(
+        get_device_capability=lambda: (9, 0), current_device=lambda: 0
+    )
+    torch._dynamo = types.SimpleNamespace(is_compiling=lambda: False)
+    for name in ["float8_e4m3fn", "float32", "bfloat16", "float16"]:
+        setattr(torch, name, object())
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    replacements = {}
+    gems = types.ModuleType("flaggems_sglang")
+    for name in groups[0][1:]:
+        fn = lambda *args, _name=name, **kwargs: ("framework", _name)
+        setattr(gems, name, fn)
+        replacements[name] = fn
+    monkeypatch.setitem(sys.modules, "flaggems_sglang", gems)
+    packages = {}
+    for name in [
+        "flag_gems",
+        "flag_gems.ops",
+        "flag_gems.fused",
+        "flag_gems.fused.dsv41",
+    ]:
+        module = types.ModuleType(name)
+        module.__path__ = []
+        packages[name] = module
+        monkeypatch.setitem(sys.modules, name, module)
+    config = types.ModuleType("flag_gems.ops._w8a8_block_fp8_configs")
+    config.BLOCK_FP8_SM90_ABI = abi
+    config._H100_MIDRANGE_FP8_CONFIGS = {(6, 1792, 5120): None}
+    core = types.ModuleType("flag_gems.fused.dsv41.fp4_indexer")
+    core.FP4_INDEX_SCORE_ABI = 1
+    core.fp4_index_logits_decode = lambda *a, **k: "core fp4"
+    replacements["fp4_index_logits_decode"] = core.fp4_index_logits_decode
+    mhc = types.ModuleType("flag_gems.fused.dsv41.mhc")
+    mhc.MHC_EXACT_ABI = 1
+    for name in groups[2]:
+        fn = lambda *a, _name=name, **k: ("common", _name)
+        setattr(mhc, name, fn)
+        replacements[name] = fn
+    matmul = types.ModuleType("flag_gems.ops.w8a8_block_fp8_matmul")
+    calls = []
+    matmul.w8a8_block_fp8_matmul = (
+        lambda *a, **k: calls.append(a) or "common fp8"
+    )
+    for module in [config, core, mhc, matmul]:
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    packages["flag_gems.fused.dsv41"].mhc = mhc
+    alias = types.ModuleType("sglang.test_aliases")
+    for name, fn in originals.items():
+        setattr(alias, name, fn)
+    monkeypatch.setitem(sys.modules, alias.__name__, alias)
+    return alias, originals, replacements, calls, torch
+
+
+def test_install_routes_common_math_and_framework_fusion(
+    monkeypatch, tmp_path
+):
+    p = fresh()
+    alias, originals, replacements, calls, torch = mock_reviewed_install(
+        monkeypatch, tmp_path, p
+    )
+    handle = p.install()
+    assert p.install() is handle
+    for name, fn in replacements.items():
+        assert getattr(alias, name) is fn
+
+    class Tensor:
+        ndim = 2
+
+        def __init__(self, shape, dtype):
+            self.shape, self.dtype = shape, dtype
+
+        def is_contiguous(self):
+            return True
+
+    a, b = Tensor((6, 5120), torch.float8_e4m3fn), Tensor(
+        (1792, 5120), torch.float8_e4m3fn
+    )
+    sa, sb = Tensor((6, 160), torch.float32), Tensor((56, 160), torch.float32)
+    assert (
+        alias.w8a8_block_fp8_matmul_triton(
+            a, b, sa, sb, [32, 32], torch.bfloat16
+        )
+        == "common fp8"
+    )
+    assert calls[0] == (a, b, sa, sb, [32, 32], torch.bfloat16)
+    assert (
+        alias.w8a8_block_fp8_matmul_triton(
+            a, b, sa, sb, [32, 32], torch.float16
+        )[0]
+        == "native"
+    )
+    handle.uninstall()
+    assert all(getattr(alias, name) is fn for name, fn in originals.items())
+
+
+def test_common_abi_mismatch_fails_before_rebinding(monkeypatch, tmp_path):
+    p = fresh()
+    alias, originals, _, _, _ = mock_reviewed_install(
+        monkeypatch, tmp_path, p, abi=2
+    )
+    with pytest.raises(RuntimeError, match="FlagGems SM90 operator ABI"):
+        p.install()
+    assert all(getattr(alias, name) is fn for name, fn in originals.items())
+    assert p._handle is None

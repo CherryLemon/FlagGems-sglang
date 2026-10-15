@@ -66,30 +66,39 @@ def install():
     modules = {}
     for name, expected in _SOURCE_PINS.items():
         module = importlib.import_module(name)
-        if (
-            hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest()
-            != expected
-        ):
+        if hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest() != expected:
             raise RuntimeError("unreviewed SGLang operator source: " + name)
         modules[name] = module
 
     import flaggems_sglang as gems
-    from flaggems_sglang.runtime.backend._nvidia.hopper.ops._dsv41_fp8_configs import (
-        _H100_MIDRANGE_FP8_CONFIGS,
+    from flag_gems.fused.dsv41 import mhc as model_mhc
+    from flag_gems.fused.dsv41.fp4_indexer import (
+        FP4_INDEX_SCORE_ABI,
+        fp4_index_logits_decode,
     )
+    from flag_gems.ops._w8a8_block_fp8_configs import (
+        _H100_MIDRANGE_FP8_CONFIGS,
+        BLOCK_FP8_SM90_ABI,
+    )
+    from flag_gems.ops.w8a8_block_fp8_matmul import w8a8_block_fp8_matmul
+
+    if (BLOCK_FP8_SM90_ABI, FP4_INDEX_SCORE_ABI, model_mhc.MHC_EXACT_ABI) != (1, 1, 1):
+        raise RuntimeError(
+            "incompatible FlagGems SM90 operator ABI; install the pinned dsv41 extra"
+        )
 
     fp4 = modules["sglang.kernels.ops.attention.dsv4.sm90_fp4_indexer"]
     mhc = modules["sglang.kernels.ops.layernorm.mhc"]
     fp8 = modules["sglang.kernels.ops.quantization.fp8_kernel"]
     replacements = {}
+    replacements[fp4.fp4_index_logits_decode] = fp4_index_logits_decode
     for name in [
-        "fp4_index_logits_decode",
         "fp4_index_logits_req_to_token",
         "fp4_index_logits_candidate_blocks",
     ]:
         replacements[getattr(fp4, name)] = getattr(gems, name)
     for name in ["hc_mix_stats", "hc_mix_stats_sinkhorn_exact", "hc_combine"]:
-        replacements[getattr(mhc, name)] = getattr(gems, name)
+        replacements[getattr(mhc, name)] = getattr(model_mhc, name)
     original = fp8.w8a8_block_fp8_matmul_triton
 
     @functools.wraps(original)
@@ -103,11 +112,10 @@ def install():
             and output_dtype in (torch.bfloat16, torch.float32)
             and A.is_contiguous()
             and B.is_contiguous()
-            and (A.shape[0], B.shape[0], A.shape[1])
-            in _H100_MIDRANGE_FP8_CONFIGS
+            and (A.shape[0], B.shape[0], A.shape[1]) in _H100_MIDRANGE_FP8_CONFIGS
         )
         if supported:
-            return gems.dsv41_block_fp8_matmul(A, B, As, Bs, output_dtype)
+            return w8a8_block_fp8_matmul(A, B, As, Bs, [32, 32], output_dtype)
         return original(A, B, As, Bs, block_size, output_dtype)
 
     replacements[original] = block_fp8

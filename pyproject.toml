@@ -43,6 +43,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dsv41 = [
+    "flag_gems @ git+https://github.com/CherryLemon/FlagGems.git@934e482098d420bf75ce74b0ad35e12e825535e2",
+    "tilelang==0.1.12",
+]
+
 test = [
     "pytest>=7.1.0",
     "numpy>=1.26",

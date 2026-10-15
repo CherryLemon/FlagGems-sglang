@@ -17,38 +17,6 @@
 import torch
 
 
-def fp8_inputs(m, n, k, seed=41):
-    g = torch.Generator(device="cuda").manual_seed(seed)
-    a = (torch.randn(m, k, device="cuda", generator=g) * 0.25).to(
-        torch.float8_e4m3fn
-    )
-    b = (torch.randn(n, k, device="cuda", generator=g) * 0.25).to(
-        torch.float8_e4m3fn
-    )
-    sa = torch.exp2(
-        torch.randint(-3, 3, (m, k // 32), device="cuda", generator=g).float()
-    )
-    sb = torch.exp2(
-        torch.randint(
-            -3, 3, ((n + 31) // 32, k // 32), device="cuda", generator=g
-        ).float()
-    )
-    return a, b, sa, sb
-
-
-def fp8_reference(a, b, sa, sb, output_dtype=torch.bfloat16, **_):
-    m, k = a.shape
-    n = b.shape[0]
-    out = torch.zeros((m, n), dtype=torch.float32, device=a.device)
-    for i in range(k // 32):
-        sl = slice(32 * i, 32 * (i + 1))
-        dot = a[:, sl].float() @ b[:, sl].float().T
-        out += (
-            dot * sa[:, i, None] * sb[:, i].repeat_interleave(32)[:n][None, :]
-        )
-    return out.to(output_dtype)
-
-
 def fp4_inputs(b, width, ratio=1, seed=52, page=256):
     g = torch.Generator(device="cuda").manual_seed(seed)
     groups = (b + 5) // 6
@@ -70,7 +38,6 @@ def fp4_inputs(b, width, ratio=1, seed=52, page=256):
     req = torch.arange(b, device="cuda", dtype=torch.int64) // 6
     lens = torch.full((b,), width, dtype=torch.int64, device="cuda")
     return q, weights, mapping, req, lens, table, page, ratio, width
-
 
 def fp4_reference(q, weights, mapping, req, lens, table, page, ratio, width):
     payload = table[:, : page * 64].reshape(-1, 64)
@@ -104,7 +71,6 @@ def fp4_reference(q, weights, mapping, req, lens, table, page, ratio, width):
         )
         result.append(torch.where(valid, score, -torch.inf))
     return torch.stack(result)
-
 
 def fp4_serving_graph_inputs(b, ratio, seed=52):
     """640K Graph capacity, 128K visible input, distinct per-request KV pages."""
@@ -152,16 +118,6 @@ def fp4_serving_graph_inputs(b, ratio, seed=52):
         full_capacity // ratio,
     )
 
-
-def mhc_inputs(m, k=20480, seed=71):
-    g = torch.Generator(device="cuda").manual_seed(seed)
-    x = torch.randn((m, k), device="cuda", generator=g).bfloat16()
-    fn = (torch.randn((24, k), device="cuda", generator=g) * 0.01).float()
-    scale = torch.tensor([0.7, 0.8, 0.9], device="cuda")
-    base = torch.randn((24,), device="cuda", generator=g) * 0.1
-    return x, fn, scale, base
-
-
 def assert_exact(a, b):
     if isinstance(a, (tuple, list)):
         assert len(a) == len(b)
@@ -173,7 +129,6 @@ def assert_exact(a, b):
         assert torch.equal(
             a.contiguous().view(torch.uint8), b.contiguous().view(torch.uint8)
         ), "visible storage bytes differ"
-
 
 def changed_graph(fn, args, refresh, reference, repeats=3):
     for _ in range(3):

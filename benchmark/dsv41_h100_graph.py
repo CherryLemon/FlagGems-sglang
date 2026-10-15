@@ -14,8 +14,7 @@
 
 """Correctness-gated, alternating CUDA Graph operator microbenchmarks.
 
-Run from this repository with PYTHONPATH=src. FP8/mHC values are synthetic;
-FP4 can use retained, SHA-pinned C32 inputs through --fixtures.
+Run from this repository with PYTHONPATH=src. FP4 uses synthetic pages or retained, SHA-pinned C32 inputs through --fixtures.
 """
 
 import argparse
@@ -29,46 +28,21 @@ import time
 from functools import lru_cache
 from pathlib import Path
 
+import flaggems_sglang as gems
 import torch
 import triton
-
-import flaggems_sglang as gems
-from flaggems_sglang.runtime.backend._nvidia.hopper.ops._dsv41_fp8_configs import (
-    _H100_MIDRANGE_FP8_CONFIGS,
-)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.dsv41_helpers import (  # noqa: E402
     assert_exact,
     fp4_serving_graph_inputs,
-    fp8_inputs,
-    mhc_inputs,
 )
 
 
 def cases(full):
-    shapes = (
-        sorted(_H100_MIDRANGE_FP8_CONFIGS)
-        if full
-        else [
-            (6, 1792, 5120),
-            (24, 1792, 5120),
-            (48, 1792, 5120),
-            (96, 5120, 4096),
-            (24, 4608, 5120),
-            (48, 5120, 2304),
-        ]
-    )
-    for shape in shapes:
-        yield "fp8", shape
     for b in [6, 12, 18, 24, 30, 36, 42, 48, 60, 72, 84, 96, 120]:
         for ratio in [1, 2]:
             yield "fp4", (b, 655627 // ratio, ratio)
-    for m in sorted(
-        {6 * b for b in [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20]}
-        | {5 * b for b in [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20]}
-    ):
-        yield "mhc", (m,)
 
 
 @lru_cache(maxsize=2)
@@ -111,46 +85,21 @@ def derived_captured_fp4(folder, shape):
 
 
 def prepare(family, shape, fixtures=None):
-    if family == "fp8":
-        xs = fp8_inputs(*shape)
-        baseline = lambda: gems.dsv41_block_fp8_matmul(*xs, tuned=False)
-        candidate = lambda: gems.dsv41_block_fp8_matmul(*xs)
-    elif family == "fp4":
-        xs = (
-            derived_captured_fp4(fixtures, shape)
-            if fixtures
-            else fp4_serving_graph_inputs(shape[0], shape[2])
+    xs = (
+        derived_captured_fp4(fixtures, shape)
+        if fixtures
+        else fp4_serving_graph_inputs(shape[0], shape[2])
+    )
+
+    def call(group):
+        return gems.fp4_index_logits_req_to_token(
+            *xs,
+            candidate_block_size=8 if shape[2] == 1 else 0,
+            write_logits=shape[2] != 1,
+            query_group_size=group,
         )
 
-        def call(group):
-            return gems.fp4_index_logits_req_to_token(
-                *xs,
-                candidate_block_size=8 if shape[2] == 1 else 0,
-                write_logits=shape[2] != 1,
-                query_group_size=group,
-            )
-
-        baseline = lambda: call(1)
-        candidate = lambda: call(6)
-    else:
-        x, w, s, b = mhc_inputs(*shape)
-        baseline = lambda: gems.hc_split_sinkhorn(
-            gems.hc_mix_stats(x, w, 1e-6, tuned=False), s, b
-        )
-        candidate = (
-            (
-                lambda: gems.hc_mix_stats_sinkhorn_exact(
-                    x, w, s, b, 4, 20, 1e-6, 1e-6
-                )
-            )
-            if shape[0] in (36, 40, 42, 48, 50, 60, 80, 84, 96)
-            else (
-                lambda: gems.hc_split_sinkhorn(
-                    gems.hc_mix_stats(x, w, 1e-6), s, b
-                )
-            )
-        )
-    return baseline, candidate
+    return lambda: call(1), lambda: call(6)
 
 
 def main():
@@ -161,9 +110,7 @@ def main():
         "--fixtures",
         help="Optional SHA-pinned historical C32 FP4 fixtures; other row counts are derived",
     )
-    p.add_argument(
-        "--family", choices=["all", "fp8", "fp4", "mhc"], default="all"
-    )
+    p.add_argument("--family", choices=["all", "fp4"], default="all")
     p.add_argument("--rounds", type=int, default=2)
     p.add_argument("--rep-ms", type=int, default=100)
     a = p.parse_args()
@@ -174,10 +121,9 @@ def main():
         "gpu": torch.cuda.get_device_name(),
         "capability": torch.cuda.get_device_capability(),
         "versions": {
-            n: importlib.metadata.version(n)
-            for n in ["torch", "triton", "tilelang"]
+            n: importlib.metadata.version(n) for n in ["torch", "triton", "tilelang"]
         },
-        "input_provenance": "FP8/mHC synthetic values; FP4 provenance recorded separately below",
+        "input_provenance": "FP4 provenance recorded separately below",
         "protocol": (
             "25 eager warmups; median do_bench_cudagraph; "
             "alternating implementation order; reversed case order in round 2"
@@ -191,13 +137,9 @@ def main():
         ),
         "excludes": "serving, quantization before GEMM, input generation, profiler, kernel load time",
         "baseline": {
-            "fp8": "frozen native configured generic/Hopper schedule",
             "fp4": "native per-query scoring/candidate chain",
-            "mhc": "pre-geometry native stats + separate TileLang Sinkhorn",
         },
-        "script_sha256": hashlib.sha256(
-            Path(__file__).read_bytes()
-        ).hexdigest(),
+        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "measurements": [],
     }
     if a.fixtures:
@@ -268,11 +210,7 @@ def main():
                     candidate_block_size=8 if shape[2] == 1 else 0,
                     static_capacity_full_tokens=655627,
                     fixture_kind=(
-                        (
-                            "actual C32"
-                            if shape[0] == 48
-                            else "derived from C32"
-                        )
+                        ("actual C32" if shape[0] == 48 else "derived from C32")
                         if a.fixtures
                         else "synthetic distinct request pages"
                     ),
@@ -282,7 +220,7 @@ def main():
             print(json.dumps(row), flush=True)
             del baseline, candidate
     summary = {}
-    for family in ["fp8", "fp4", "mhc"]:
+    for family in ["fp4"]:
         grouped = {}
         for row in meta["measurements"]:
             if row["family"] == family:

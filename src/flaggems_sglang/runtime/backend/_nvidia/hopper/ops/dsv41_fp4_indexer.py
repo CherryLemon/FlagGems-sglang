@@ -33,6 +33,22 @@ import torch
 import triton
 import triton.language as tl
 
+_e2m1_decode = None
+fp4_weighted_head_score = None
+
+
+def _load_fp4_math():
+    # Keep the framework package importable without its optional dsv41 extra.
+    # Resolve common JIT helpers before compiling/capturing the fused kernel.
+    global _e2m1_decode, fp4_weighted_head_score
+    if _e2m1_decode is None:
+        from flag_gems.fused.dsv41 import fp4_indexer
+
+        if fp4_indexer.FP4_INDEX_SCORE_ABI != 1:
+            raise RuntimeError("incompatible FlagGems FP4 index-score ABI")
+        _e2m1_decode = fp4_indexer._e2m1_decode
+        fp4_weighted_head_score = fp4_indexer.fp4_weighted_head_score
+
 
 def _skip_invalid_tiles():
     return os.getenv("FLAGGEMS_DSV41_INDEXER_SKIP_INVALID_TILES", "1") == "1"
@@ -41,28 +57,6 @@ def _skip_invalid_tiles():
 INDEX_HEAD_DIM = 128
 PAYLOAD_BYTES = tl.constexpr(64)
 SCALE_BYTES = tl.constexpr(4)
-
-
-@triton.jit
-def _e2m1_decode(code):
-    # E2M1 magnitudes are 0, .5, 1, 1.5, 2, 3, 4, 6. Their exact FP32
-    # encodings avoid per-element exponentiation and floating-point decoding.
-    u = code.to(tl.uint32)
-    mag = u & 7
-    bits = tl.where(
-        mag == 0, 0, tl.where(mag == 1, 0x3F000000, 0x3F000000 + (mag << 22))
-    )
-    v = (bits | ((u & 8) << 28)).to(tl.float32, bitcast=True)
-    # Legacy decoding canonicalizes FP4 -0 to +0. An explicit exact add keeps
-    # that behavior without an extra predicate/live range in the score kernel.
-    return tl.inline_asm_elementwise(
-        "add.rn.f32 $0, $1, 0f00000000;",
-        constraints="=f,f",
-        args=[v],
-        dtype=tl.float32,
-        is_pure=True,
-        pack=1,
-    )
 
 
 @triton.jit
@@ -117,16 +111,12 @@ def _fp4_index_logits_kernel(
                     offs_l < L,
                 )
             if WRITE_CANDIDATES:
-                nblocks = (
-                    L + CANDIDATE_BLOCK_SIZE - 1
-                ) // CANDIDATE_BLOCK_SIZE
+                nblocks = (L + CANDIDATE_BLOCK_SIZE - 1) // CANDIDATE_BLOCK_SIZE
                 block_ids = lb * (BLOCK_L // CANDIDATE_BLOCK_SIZE) + tl.arange(
                     0, BLOCK_L // CANDIDATE_BLOCK_SIZE
                 )
                 tl.store(
-                    candidate_scores_ptr
-                    + b * candidate_score_stride
-                    + block_ids,
+                    candidate_scores_ptr + b * candidate_score_stride + block_ids,
                     -float("inf"),
                     block_ids < nblocks,
                 )
@@ -158,19 +148,16 @@ def _fp4_index_logits_kernel(
         ).to(tl.int64)
         slot = slot // RATIO
     else:
-        slot = tl.load(
-            slots_ptr + b * L + offs_l, mask=offs_l < L, other=0
-        ).to(tl.int64)
+        slot = tl.load(slots_ptr + b * L + offs_l, mask=offs_l < L, other=0).to(
+            tl.int64
+        )
     page = slot // page_size
     off = slot % page_size
     row_base = page * row_stride
 
     # K payload: [BLOCK_L, HALF_D] uint8
     pay = tl.load(
-        table_ptr
-        + row_base[:, None]
-        + off[:, None] * PAYLOAD_BYTES
-        + offs_i[None, :],
+        table_ptr + row_base[:, None] + off[:, None] * PAYLOAD_BYTES + offs_i[None, :],
         mask=valid[:, None],
         other=0,
     )
@@ -193,35 +180,20 @@ def _fp4_index_logits_kernel(
 
     # queries: even / odd elements, [H, HALF_D] bf16
     q_even = tl.load(
-        q_ptr
-        + b * stride_qb
-        + offs_h[:, None] * stride_qh
-        + 2 * offs_i[None, :]
+        q_ptr + b * stride_qb + offs_h[:, None] * stride_qh + 2 * offs_i[None, :]
     )
     q_odd = tl.load(
-        q_ptr
-        + b * stride_qb
-        + offs_h[:, None] * stride_qh
-        + 2 * offs_i[None, :]
-        + 1
+        q_ptr + b * stride_qb + offs_h[:, None] * stride_qh + 2 * offs_i[None, :] + 1
     )
 
-    acc = tl.dot(q_even, tl.trans(k_low))  # [H, BLOCK_L] fp32
-    acc += tl.dot(q_odd, tl.trans(k_high))
-    # reference rounding points: bf16 dot -> relu -> * bf16 weight -> bf16 -> sum -> bf16
-    s = acc.to(tl.bfloat16).to(tl.float32)
-    s = tl.maximum(s, 0.0)
     w = tl.load(w_ptr + b * stride_wb + offs_h).to(tl.float32)
-    s = (s * w[:, None]).to(tl.bfloat16).to(tl.float32)
-    logit = tl.sum(s, axis=0).to(tl.bfloat16).to(tl.float32)
+    logit = fp4_weighted_head_score(q_even, q_odd, k_low, k_high, w)
     logit = tl.where(valid, logit, float("-inf"))
     if WRITE_LOGITS:
         tl.store(out_ptr + b * stride_out + offs_l, logit, mask=offs_l < L)
     if WRITE_CANDIDATES:
         blocks_per_tile: tl.constexpr = BLOCK_L // CANDIDATE_BLOCK_SIZE
-        block_scores = tl.reshape(
-            logit, (blocks_per_tile, CANDIDATE_BLOCK_SIZE)
-        )
+        block_scores = tl.reshape(logit, (blocks_per_tile, CANDIDATE_BLOCK_SIZE))
         block_scores = tl.max(block_scores, axis=1)
         block_ids = lb * blocks_per_tile + tl.arange(0, blocks_per_tile)
         last_block = (n_vis - 1) // CANDIDATE_BLOCK_SIZE
@@ -281,11 +253,7 @@ def _fp4_group_load_keys(
     low = _e2m1_decode(pay & 15)
     high = _e2m1_decode(pay >> 4 & 15)
     exps = tl.load(
-        TABLE
-        + row[:, None]
-        + PAGE * 64
-        + off[:, None] * 4
-        + (i // 16)[None, :],
+        TABLE + row[:, None] + PAGE * 64 + off[:, None] * 4 + (i // 16)[None, :],
         valid[:, None],
         other=127,
     )
@@ -345,21 +313,15 @@ def _fp4_group_score(
     l = lb * BL + tl.arange(0, BL)  # noqa: E741
     qe = tl.load(Q + b * SQB + h[:, None] * SQH + 2 * i[None, :])
     qo = tl.load(Q + b * SQB + h[:, None] * SQH + 2 * i[None, :] + 1)
-    acc = tl.dot(qe, tl.trans(KL))
-    acc += tl.dot(qo, tl.trans(KH))
-    s = tl.maximum(acc.to(tl.bfloat16).to(tl.float32), 0.0)
     w = tl.load(W + b * SWB + h).to(tl.float32)
-    s = (s * w[:, None]).to(tl.bfloat16).to(tl.float32)
-    logit = tl.sum(s, 0).to(tl.bfloat16).to(tl.float32)
+    logit = fp4_weighted_head_score(qe, qo, KL, KH, w)
     logit = tl.where(l < tl.minimum(nvis, L), logit, -float("inf"))
     if WRITE_LOGITS:
         tl.store(OUT + b * SO + l, logit, l < L)
     if WRITE_CANDIDATES:
         scores = tl.max(tl.reshape(logit, (BL // CB, CB)), 1)
         ids = lb * (BL // CB) + tl.arange(0, BL // CB)
-        scores = tl.where(
-            (nvis > 0) & (ids == (nvis - 1) // CB), float("inf"), scores
-        )
+        scores = tl.where((nvis > 0) & (ids == (nvis - 1) // CB), float("inf"), scores)
         tl.store(CS + b * SCS + ids, scores, ids < tl.cdiv(L, CB))
         tl.store(CL + b, tl.cdiv(nvis, CB), lb == 0)
 
@@ -542,11 +504,7 @@ def _fp4_group_load_keys_persistent_tile(
     low = _e2m1_decode(pay & 15)
     high = _e2m1_decode(pay >> 4 & 15)
     exps = tl.load(
-        TABLE
-        + row[:, None]
-        + PAGE * 64
-        + off[:, None] * 4
-        + (i // 16)[None, :],
+        TABLE + row[:, None] + PAGE * 64 + off[:, None] * 4 + (i // 16)[None, :],
         valid[:, None],
         other=127,
     )
@@ -608,21 +566,15 @@ def _fp4_group_score_persistent_tile(
     l = lb * BL + tl.arange(0, BL)  # noqa: E741
     qe = tl.load(Q + b * SQB + h[:, None] * SQH + 2 * i[None, :])
     qo = tl.load(Q + b * SQB + h[:, None] * SQH + 2 * i[None, :] + 1)
-    acc = tl.dot(qe, tl.trans(KL))
-    acc += tl.dot(qo, tl.trans(KH))
-    s = tl.maximum(acc.to(tl.bfloat16).to(tl.float32), 0.0)
     w = tl.load(W + b * SWB + h).to(tl.float32)
-    s = (s * w[:, None]).to(tl.bfloat16).to(tl.float32)
-    logit = tl.sum(s, 0).to(tl.bfloat16).to(tl.float32)
+    logit = fp4_weighted_head_score(qe, qo, KL, KH, w)
     logit = tl.where(l < tl.minimum(nvis, L), logit, -float("inf"))
     if WRITE_LOGITS:
         tl.store(OUT + b * SO + l, logit, l < L)
     if WRITE_CANDIDATES:
         scores = tl.max(tl.reshape(logit, (BL // CB, CB)), 1)
         ids = lb * (BL // CB) + tl.arange(0, BL // CB)
-        scores = tl.where(
-            (nvis > 0) & (ids == (nvis - 1) // CB), float("inf"), scores
-        )
+        scores = tl.where((nvis > 0) & (ids == (nvis - 1) // CB), float("inf"), scores)
         tl.store(CS + b * SCS + ids, scores, ids < tl.cdiv(L, CB))
         tl.store(CL + b, tl.cdiv(nvis, CB), lb == 0)
 
@@ -864,69 +816,6 @@ def _fp4_index_logits_grouped_persistent_kernel(
         )
 
 
-def fp4_index_logits_decode(
-    q: torch.Tensor,
-    weights: torch.Tensor,
-    slots: torch.Tensor,
-    lens: torch.Tensor,
-    table: torch.Tensor,
-    page_size: int,
-) -> torch.Tensor:
-    """q [B, H, 128] bf16, weights [B, H], slots [B, L], lens [B] int64,
-    table = the layer's fp4 index-K page buffer (uint8, 2D). Returns [B, L] fp32
-    logits with -inf at positions >= lens."""
-    assert q.dtype == torch.bfloat16 and q.shape[-1] == INDEX_HEAD_DIM
-    B, H, _ = q.shape
-    L = slots.shape[1]
-    assert table.dtype == torch.uint8 and table.dim() == 2
-    q = q.contiguous()
-    weights = weights.to(torch.bfloat16).contiguous()
-    slots = slots.contiguous()
-    out_storage = torch.empty(
-        (B, triton.cdiv(L, 4) * 4), dtype=torch.float32, device=q.device
-    )
-    out = out_storage[:, :L]
-    if L == 0:
-        return out
-    BLOCK_L = 64
-    grid = (B, triton.cdiv(L, BLOCK_L))
-    _fp4_index_logits_kernel[grid](
-        q,
-        weights,
-        slots,
-        slots,
-        lens,
-        slots,
-        lens.to(torch.int64).contiguous(),
-        table,
-        out,
-        out,
-        lens,
-        L,
-        page_size,
-        table.stride(0),
-        q.stride(0),
-        q.stride(1),
-        weights.stride(0),
-        slots.stride(0),
-        slots.stride(0),
-        out.stride(0),
-        out.stride(0),
-        H=H,
-        HALF_D=INDEX_HEAD_DIM // 2,
-        BLOCK_L=BLOCK_L,
-        SKIP_INVALID=_skip_invalid_tiles(),
-        RATIO=1,
-        USE_REQ_TO_TOKEN=False,
-        USE_CANDIDATE_BLOCKS=False,
-        CANDIDATE_BLOCK_SIZE=1,
-        WRITE_CANDIDATES=False,
-        WRITE_LOGITS=True,
-        num_warps=4,
-    )
-    return out
-
-
 def fp4_index_logits_req_to_token(
     q: torch.Tensor,
     weights: torch.Tensor,
@@ -946,6 +835,7 @@ def fp4_index_logits_req_to_token(
     | tuple[torch.Tensor, torch.Tensor]
 ):
     """Score logical compressed positions without materializing their pool slots."""
+    _load_fp4_math()
     assert q.dtype == torch.bfloat16 and q.shape[-1] == INDEX_HEAD_DIM
     B, H, _ = q.shape
     assert req.shape == lens.shape == (B,)
@@ -957,9 +847,7 @@ def fp4_index_logits_req_to_token(
     req = req.to(torch.int64).contiguous()
     lens = lens.to(torch.int64).contiguous()
     output_width = triton.cdiv(width, 4) * 4 if write_logits else 4
-    out_storage = torch.empty(
-        (B, output_width), dtype=torch.float32, device=q.device
-    )
+    out_storage = torch.empty((B, output_width), dtype=torch.float32, device=q.device)
     out = out_storage[:, :width]
     block_l = 64
     if candidate_block_size:
@@ -988,10 +876,7 @@ def fp4_index_logits_req_to_token(
         and _skip_invalid_tiles()
     )
     use_persistent = (
-        use_middle
-        and candidate_block_size == 8
-        and not write_logits
-        and width >= 65536
+        use_middle and candidate_block_size == 8 and not write_logits and width >= 65536
     )
     use_grouped = (
         query_group_size == 6
@@ -1056,9 +941,7 @@ def fp4_index_logits_req_to_token(
     elif use_grouped:
         if use_middle:
             block_l = 128
-        _fp4_index_logits_grouped_kernel[
-            (B // 6, triton.cdiv(width, block_l))
-        ](
+        _fp4_index_logits_grouped_kernel[(B // 6, triton.cdiv(width, block_l))](
             q,
             weights,
             req_to_token,
@@ -1145,6 +1028,7 @@ def fp4_index_logits_candidate_blocks(
     candidate_block_size: int,
 ) -> torch.Tensor:
     """Score compact candidate blocks while resolving physical slots in-kernel."""
+    _load_fp4_math()
     assert q.dtype == torch.bfloat16 and q.shape[-1] == INDEX_HEAD_DIM
     batch, heads, _ = q.shape
     assert req.shape == candidate_lens.shape == (batch,)
@@ -1208,7 +1092,6 @@ FP8_E4M3_MAX = 448.0
 
 
 __all__ = [
-    "fp4_index_logits_decode",
     "fp4_index_logits_req_to_token",
     "fp4_index_logits_candidate_blocks",
 ]

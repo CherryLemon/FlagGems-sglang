@@ -87,16 +87,6 @@ def test_per_query_fallback_odd_rows():
     )
 
 
-def test_direct_slot_decode_matches_independent_reference():
-    args = fp4_inputs(6, 129)
-    q, weights, mapping, req, lens, table, page, _, width = args
-    slots = mapping[req, :width].to(torch.int64).contiguous()
-    actual = gems.fp4_index_logits_decode(q, weights, slots, lens, table, page)
-    torch.testing.assert_close(
-        actual, fp4_reference(*args), rtol=0.008, atol=0.03125
-    )
-
-
 @pytest.mark.parametrize("ratio", [1, 2])
 def test_compact_candidate_consumer_matches_independent_reference(ratio):
     args = fp4_inputs(6, 129, ratio)
