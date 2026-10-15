@@ -25,8 +25,9 @@ readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.8.0"
 license = { text = "Apache Software License" }
 authors = [
-    { name = "Bin Zhang", email = "842884726@qq.com" },
+    { name = "Hongyu Liu", email = "liuhyscc@gmail.com" },
     { name = "Bingjie Wang", email = "xxx@xxx.com" },
+    { name = "Bin Zhang", email = "842884726@qq.com" },
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

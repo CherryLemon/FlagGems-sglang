@@ -23,9 +23,6 @@ from flaggems_sglang.reference.chunk_cumsum import (
     reference as chunk_cumsum_reference,
 )
 
-reference = get_reference("chunk_state_varlen")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -150,17 +147,15 @@ def _case(
     )
 
 
-CORRECTNESS_CASES = [
-    _case([3, 5], 8, 4, 2, 16, 8),
-    _case([10, 6, 4, 12], 16, 8, 2, 32, 16),
-    _case([20, 12, 5, 27, 32], 32, 16, 4, 64, 32),
+_CASE_FACTORIES = [
+    lambda: _case([3, 5], 8, 4, 2, 16, 8),
+    lambda: _case([10, 6, 4, 12], 16, 8, 2, 32, 16),
+    lambda: _case([20, 12, 5, 27, 32], 32, 16, 4, 64, 32),
+    lambda: _case([256] * 8, 256, 32, 8, 64, 128),
+    lambda: _case([256] * 32, 256, 64, 8, 64, 128),
 ]
 
-BENCH_CASES = [
-    _case([256] * 8, 256, 32, 8, 64, 128),
-    _case([256] * 32, 256, 64, 8, 64, 128),
-]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +166,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.chunk_state_varlen
 def test_chunk_state_varlen(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("chunk_state_varlen")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("chunk_cumsum")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -112,17 +109,15 @@ def _case(
     )
 
 
-CORRECTNESS_CASES = [
-    _case(1, 1, 8, 4),
-    _case(2, 3, 16, 8, dt_bias=True, dt_softplus=True),
-    _case(3, 2, 32, 16, dt_bias=True),
+_CASE_FACTORIES = [
+    lambda: _case(1, 1, 8, 4),
+    lambda: _case(2, 3, 16, 8, dt_bias=True, dt_softplus=True),
+    lambda: _case(3, 2, 32, 16, dt_bias=True),
+    lambda: _case(8, 16, 256, 32, dt_bias=True, dt_softplus=True),
+    lambda: _case(32, 4, 256, 64, dt_bias=True, dt_softplus=True),
 ]
 
-BENCH_CASES = [
-    _case(8, 16, 256, 32, dt_bias=True, dt_softplus=True),
-    _case(32, 4, 256, 64, dt_bias=True, dt_softplus=True),
-]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +128,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.chunk_cumsum
 def test_chunk_cumsum(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("chunk_cumsum")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

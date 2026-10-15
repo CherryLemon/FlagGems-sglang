@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("interleaved_rope")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -74,14 +71,16 @@ def _case(s, d, mrope_section):
     return dict(x=_x(s, d), mrope_section=mrope_section)
 
 
-CORRECTNESS_CASES = [
-    _case(1, 48, [8, 8, 8]),
-    _case(37, 96, [16, 16, 16]),
-    _case(257, 128, [16, 24, 24]),
+_CASE_FACTORIES = [
+    lambda: _case(1, 48, [8, 8, 8]),
+    lambda: _case(37, 96, [16, 16, 16]),
+    lambda: _case(257, 128, [16, 24, 24]),
+]
+_CASE_FACTORIES += [
+    (lambda s=s: _case(s, 128, [16, 24, 24])) for s in (1, 128, 2048, 8192)
 ]
 
-BENCH_CASES = [_case(s, 128, [16, 24, 24]) for s in (1, 128, 2048, 8192)]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +91,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.interleaved_rope
 def test_interleaved_rope(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("interleaved_rope")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

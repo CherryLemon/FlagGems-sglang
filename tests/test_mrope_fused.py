@@ -26,7 +26,12 @@ from flaggems_sglang.reference import get_reference
 
 from . import conftest as cfg
 
-mrope_fused_ref = get_reference("mrope_fused")
+
+def mrope_fused_ref(*args, **kwargs):
+    # Resolved per call: get_reference() touches the runtime device, which
+    # must not happen at import/collection time.
+    return get_reference("mrope_fused")(*args, **kwargs)
+
 
 # ---------------------------------------------------------------------------
 # Test cases (from kernel-comp-baseline/problems/rope/mrope_fused/cases.py)

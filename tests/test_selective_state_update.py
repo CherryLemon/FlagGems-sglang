@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("selective_state_update")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -145,12 +142,11 @@ def _case(
     )
 
 
-CORRECTNESS_CASES = [
-    _case(1, 4, 16, 8),
-    _case(5, 8, 64, 16, ngroups=2),
-    _case(3, 16, 128, 32, ngroups=4, has_z=False, dt_softplus=False),
-    # All three optional tensors absent, exercising the None guards.
-    _case(
+_CASE_FACTORIES = [
+    lambda: _case(1, 4, 16, 8),
+    lambda: _case(5, 8, 64, 16, ngroups=2),
+    lambda: _case(3, 16, 128, 32, ngroups=4, has_z=False, dt_softplus=False),
+    lambda: _case(
         2,
         8,
         32,
@@ -161,13 +157,11 @@ CORRECTNESS_CASES = [
         has_dt_bias=False,
         dt_softplus=False,
     ),
+    lambda: _case(64, 32, 128, 128, ngroups=8),
+    lambda: _case(256, 64, 64, 128, ngroups=8),
 ]
 
-BENCH_CASES = [
-    _case(64, 32, 128, 128, ngroups=8),
-    _case(256, 64, 64, 128, ngroups=8),
-]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +172,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.selective_state_update
 def test_selective_state_update(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("selective_state_update")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

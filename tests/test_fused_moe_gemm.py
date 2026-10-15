@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("fused_moe_gemm")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -101,13 +98,19 @@ def _check(actual, expected):
     assert_close(actual, expected, atol=0.5, rtol=1e-2)
 
 
-CORRECTNESS_CASES = [
-    _case(8, 4, 64, 128, 2),
-    _case(17, 8, 128, 256, 2),
-    _case(5, 4, 64, 128, 1),
+_CASE_FACTORIES = [
+    lambda: _case(8, 4, 64, 128, 2),
+    lambda: _case(17, 8, 128, 256, 2),
+    lambda: _case(5, 4, 64, 128, 1),
 ]
 
-BENCH_CASES = [_case(t, 8, 4096, 4096, 2) for t in (1, 8, 64, 512, 4096)]
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
+
+# Benchmark cases are not parametrized by this module; keep them as
+# zero-arg factories so importing the module allocates nothing.
+_BENCH_CASE_FACTORIES = [
+    (lambda t=t: _case(t, 8, 4096, 4096, 2)) for t in (1, 8, 64, 512, 4096)
+]
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +121,10 @@ BENCH_CASES = [_case(t, 8, 4096, 4096, 2) for t in (1, 8, 64, 512, 4096)]
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.fused_moe_gemm
 def test_fused_moe_gemm(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("fused_moe_gemm")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

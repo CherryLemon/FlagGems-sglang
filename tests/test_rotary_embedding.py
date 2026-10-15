@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("rotary_embedding")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -73,15 +70,17 @@ def _case(tokens, heads=16, head_size=128, seed=0):
     )
 
 
-CORRECTNESS_CASES = [
-    _case(1),
-    _case(37, seed=1),
-    _case(1024, heads=8, seed=2),
-    _case(4096, head_size=64, seed=3),
+_CASE_FACTORIES = [
+    lambda: _case(1),
+    lambda: _case(37, seed=1),
+    lambda: _case(1024, heads=8, seed=2),
+    lambda: _case(4096, head_size=64, seed=3),
+]
+_CASE_FACTORIES += [
+    (lambda t=t: _case(t, seed=9)) for t in (1, 64, 1024, 8192, 32768)
 ]
 
-BENCH_CASES = [_case(t, seed=9) for t in (1, 64, 1024, 8192, 32768)]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +91,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.rotary_embedding
 def test_rotary_embedding(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("rotary_embedding")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

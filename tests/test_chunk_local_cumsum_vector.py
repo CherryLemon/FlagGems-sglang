@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("chunk_local_cumsum_vector")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -86,17 +83,15 @@ def _case(
 # chunk_size must be >= 16: the kernel implements the cumsum via a
 # triangular matmul whose contraction dim is chunk_size (tl.dot requires
 # K >= 16).
-CORRECTNESS_CASES = [
-    _case(1, 1, 16, 2, 16),
-    _case(2, 3, 16, 4, 32, reverse=True),
-    _case(3, 2, 32, 4, 64, scale=0.5),
+_CASE_FACTORIES = [
+    lambda: _case(1, 1, 16, 2, 16),
+    lambda: _case(2, 3, 16, 4, 32, reverse=True),
+    lambda: _case(3, 2, 32, 4, 64, scale=0.5),
+    lambda: _case(8, 16, 64, 8, 64),
+    lambda: _case(32, 4, 64, 8, 128),
 ]
 
-BENCH_CASES = [
-    _case(8, 16, 64, 8, 64),
-    _case(32, 4, 64, 8, 128),
-]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +102,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.chunk_local_cumsum_vector
 def test_chunk_local_cumsum_vector(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("chunk_local_cumsum_vector")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case

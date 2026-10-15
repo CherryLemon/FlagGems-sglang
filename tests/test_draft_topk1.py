@@ -20,9 +20,6 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-reference = get_reference("draft_topk1")
-
-
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
 # ---------------------------------------------------------------------------
@@ -115,17 +112,18 @@ def _case(
     )
 
 
-CORRECTNESS_CASES = [
-    _case(1, 32000),
-    _case(37, 12000, with_draft_tokens=True, draft_token_column=2),
-    _case(129, 8192 + 500),
-    _case(8, 151936, with_draft_tokens=True, draft_token_column=0),
+_CASE_FACTORIES = [
+    lambda: _case(1, 32000),
+    lambda: _case(37, 12000, with_draft_tokens=True, draft_token_column=2),
+    lambda: _case(129, 8192 + 500),
+    lambda: _case(8, 151936, with_draft_tokens=True, draft_token_column=0),
+]
+_CASE_FACTORIES += [
+    (lambda bs=bs: _case(bs, 151936, with_draft_tokens=True))
+    for bs in (1, 8, 64, 512)
 ]
 
-BENCH_CASES = [
-    _case(bs, 151936, with_draft_tokens=True) for bs in (1, 8, 64, 512)
-]
-CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
+CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +134,10 @@ CORRECTNESS_CASES = CORRECTNESS_CASES + BENCH_CASES
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.draft_topk1
 def test_draft_topk1(case_idx):
-    case = CORRECTNESS_CASES[case_idx]
+    # Build only this case; a module-level list would allocate
+    # every case's tensors at import time.
+    case = _CASE_FACTORIES[case_idx]()
+    reference = get_reference("draft_topk1")
     check = (
         case.pop("check", None)
         if isinstance(case, dict) and "check" in case
