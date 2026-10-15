@@ -123,9 +123,15 @@ benchmark defaults to synthetic inputs with the same capacity, per-request
 distinct pages and modes. `--fixtures DIR` uses the optional SHA-pinned
 retained-input supplement; it is not required for the public synthetic run.
 
-mHC covers the union of target (6 tokens/request) and draft
-(5 tokens/request) rows for the serving DP-local batch sizes
-1/2/3/4/5/6/7/8/10/12/14/16/20. The baseline includes native statistics
+mHC covers logical target (6 tokens/request) and draft (5 tokens/request)
+rows for DP-local batch sizes 1/2/3/4/5/6/7/8/10/12/14/16/20, including
+odd-row draft cases used by attention TP1. In the tested TP2 deployment,
+the native Graph alignment rule requires `bs * tokens_per_request` to be
+divisible by 2: target captures all requested buckets, while draft captures
+even buckets and pads local bs1/3/5/7 to bs2/4/6/8. Those are padded Graph
+replays, not eager fallbacks. These extra odd draft rows remain in the
+microbenchmark table rather than being omitted from its geometric mean.
+The baseline includes native statistics
 geometry followed by a separate TileLang Sinkhorn; the candidate includes
 the finite geometry improvements and exact fusion where eligible.
 
