@@ -208,16 +208,19 @@ jobs:
         shell: bash
         run: echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
 
-      # setup-ci-env creates and populates the environment itself, so no
-      # preconfigured venv on the runner is involved.
+      # setup-ci-env creates and populates the environment itself; the
+      # runner's own venv is only read, as the source of the vendor runtime.
       - name: prepare ci environment
         uses: ./.github/actions/setup-ci-env
         with:
           # setup-python is off on purpose: the vendor torch and Triton build
-          # that this environment layers on top of belongs to the base image's
-          # interpreter, and the venv inherits it from there. A freshly
-          # installed interpreter would not see it.
+          # that this environment layers on top of belongs to the runner, and
+          # a freshly installed interpreter would not see it.
           setup-python: "0"
+          # The runner provides torch, so require it. Without this the job
+          # would get all the way to the first test before failing, once per
+          # selected file.
+          require-torch: "1"
           # The job runs the real suite right after, so the collection smoke
           # check would only repeat work.
           collect-tests: "0"
