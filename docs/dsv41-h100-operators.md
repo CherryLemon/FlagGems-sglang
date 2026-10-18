@@ -203,3 +203,22 @@ ragged/paged and changed-input Graph cases, and Compute Sanitizer with no
 errors. Repackaged patch application is checked separately on CPU. The new
 prefill API boundaries and callback extraction still need a fresh GPU run
 before readiness; earlier GPU results apply to the recorded original sources.
+
+
+## Historical all-concurrency W4A8 adapter
+
+`flaggems_sglang_plugin.w4a8_moe` preserves the qualified all-concurrency
+masked-row launch and native W13/W2 tactic selection for the historical W4A8
+runner. It calls the common `flag_gems.fused.dsv41.masked_row_quant` core and
+keeps original allocations, numeric helpers and physical expert/capacity rows.
+It installs only three owned Python bindings before Graph capture and restores
+them by identity. It is default-off, is not registered by the main plugin, and
+requires the exact historical source pins, four experiment flags, Torch
+2.13/cu130, FlagTree 0.7.0+gite86aa7cf and Humming 0.1.12. Current-main runners
+are intentionally rejected. Existing captured Graphs require recapture after
+uninstalling the adapter.
+
+This is native-W4A8 operator parity qualification; it does not establish W4A8
+versus W4A16 model-quality parity or enable W4A8 as a serving default. Historical
+30-case A8/A16 comparisons did not meet the fixed original tolerance. The
+public draft retains that limitation independently of its A8 byte parity.
