@@ -175,3 +175,22 @@ def test_candidate_score_small_shapes_use_general_kernel(rows, heads):
     valid = (logical >= 0) & (logical < lens[:, None]) & (logical < length)
     expected.masked_fill_(~valid, float("-inf"))
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("rows", [1, 17])
+def test_mhc_bridge_preserves_matrix_and_output_shapes(rows):
+    from flag_gems.fused.dsv41.mhc import hc_mix_stats, hc_split_sinkhorn
+    from flaggems_sglang_plugin.compat.dsv41.mhc import hc_mix_stats_sinkhorn
+
+    hc, width = 4, 20480
+    x = torch.randn(rows, width, device="cuda", dtype=torch.bfloat16)
+    fn = torch.randn(24, width, device="cuda", dtype=torch.float32) * 0.01
+    scale = torch.ones(3, device="cuda", dtype=torch.float32)
+    base = torch.zeros(24, device="cuda", dtype=torch.float32)
+    actual = hc_mix_stats_sinkhorn(x, fn, scale, base, hc, 20, 1e-6, 1e-6)
+    expected = hc_split_sinkhorn(
+        hc_mix_stats(x, fn, 1e-6), scale, base, hc, 20, 1e-6
+    )
+    assert [t.shape for t in actual] == [(rows, hc), (rows, hc), (rows, hc, hc)]
+    for a, b in zip(actual, expected):
+        torch.testing.assert_close(a, b, rtol=0, atol=0)

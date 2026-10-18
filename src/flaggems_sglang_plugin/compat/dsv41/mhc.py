@@ -10,8 +10,7 @@ from flag_gems.fused.dsv41.mhc import (
 
 def hc_mix_stats_sinkhorn(x, fn, scale, base, hc, iters, rms_eps, hc_eps):
     """Common two-stage mHC projection and Sinkhorn with FP32 intermediates."""
-    mixes = hc_mix_stats(x, fn, rms_eps).unsqueeze(1)
-    pre, post, comb = hc_split_sinkhorn(mixes, scale, base, hc, iters, hc_eps)
-    return pre[:, 0], post[:, 0], comb[:, 0]
+    mixes = hc_mix_stats(x, fn, rms_eps)
+    return hc_split_sinkhorn(mixes, scale, base, hc, iters, hc_eps)
 
 __all__ = ["hc_combine", "hc_mix_stats", "hc_mix_stats_sinkhorn", "hc_mix_stats_sinkhorn_exact"]
