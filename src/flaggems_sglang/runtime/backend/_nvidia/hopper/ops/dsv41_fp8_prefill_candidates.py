@@ -143,26 +143,11 @@ def _loop_score(
 
 
 def supports_candidate_prefill(q, weights, keys, lens, candidate_blocks):
+    """Whether inputs match the measured H100 packet-scoring domain."""
     tensors = (q, weights, keys, lens, candidate_blocks)
-    return all(isinstance(t, torch.Tensor) for t in tensors) and all(
-        (isinstance(t, torch.Tensor) for t in tensors)
-    )
-
-
-def candidate_prefill_score(q, weights, keys, lens, candidate_blocks):
-    """Score SGLang's 2,048 candidate blocks of eight logical keys each.
-
-    Candidate -1 is an invalid block; invisible output positions are -inf.
-    The caller keeps the original entry point outside this qualified domain.
-    """
-    tensors = (q, weights, keys, lens, candidate_blocks)
-    if not supports_candidate_prefill(
-        q, weights, keys, lens, candidate_blocks
-    ):
-        raise ValueError(
-            "unsupported SGLang compressed-candidate score layout"
-        )
-    if not (
+    if not all(isinstance(t, torch.Tensor) for t in tensors):
+        return False
+    return (
         q.ndim == 3
         and q.shape[1:] == (32, 128)
         and keys.ndim == 2
@@ -180,10 +165,17 @@ def candidate_prefill_score(q, weights, keys, lens, candidate_blocks):
         and all(t.device == q.device and t.is_contiguous() for t in tensors)
         and triton.__version__.split("+")[0] == "3.6.0"
         and torch.cuda.get_device_capability(q.device) == (9, 0)
-    ):
-        raise ValueError(
-            "unsupported SGLang compressed-candidate score layout"
-        )
+    )
+
+
+def candidate_prefill_score(q, weights, keys, lens, candidate_blocks):
+    """Score SGLang's 2,048 candidate blocks of eight logical keys each.
+
+    Candidate -1 is an invalid block; invisible output positions are -inf.
+    The caller keeps the original entry point outside this qualified domain.
+    """
+    if not supports_candidate_prefill(q, weights, keys, lens, candidate_blocks):
+        raise ValueError("unsupported SGLang compressed-candidate score layout")
     m, length, width = q.shape[0], keys.shape[0], 2048 * 8
     out = torch.empty((m, width), device=q.device, dtype=torch.float32)
     store_cache = ".cs" if length > 131072 else ""

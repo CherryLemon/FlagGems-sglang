@@ -138,3 +138,40 @@ def test_dense_score_rounding_visibility_and_padding(heads, length):
     expected.masked_fill_(~valid, float("-inf"))
     torch.testing.assert_close(actual[:, :length], expected, rtol=0, atol=0)
     assert torch.isneginf(actual[:, length:]).all()
+
+
+@pytest.mark.parametrize("rows,heads", [(1, 32), (17, 8)])
+def test_candidate_score_small_shapes_use_general_kernel(rows, heads):
+    from flaggems_sglang_plugin.prefill_compat import fp8_index_logits_prefill
+    from flaggems_sglang.runtime.backend._nvidia.hopper.ops.dsv41_fp8_prefill_candidates import (
+        supports_candidate_prefill,
+    )
+
+    length, block_size = 129, 8
+    q = torch.randint(-2, 3, (rows, heads, 128), device="cuda").to(
+        torch.float8_e4m3fn
+    )
+    k = torch.randint(-2, 3, (length, 128), device="cuda").to(
+        torch.float8_e4m3fn
+    )
+    w = torch.randint(-2, 3, (rows, heads), device="cuda").bfloat16()
+    lens = torch.arange(rows, device="cuda", dtype=torch.int32) * 7 + 12
+    ids = torch.tensor([0, 16, -1], device="cuda", dtype=torch.int32)
+    ids = ids.repeat(rows, 1)
+    assert not supports_candidate_prefill(q, w, k, lens, ids)
+    actual = fp8_index_logits_prefill(q, w, k, lens, candidate_blocks=ids)
+    logical = ids.long().repeat_interleave(block_size, dim=1) * block_size
+    logical += torch.arange(block_size, device="cuda").repeat(3)
+    gathered = k.float()[logical.clamp(0, length - 1)]
+    dot = torch.einsum("rhd,rnd->rhn", q.float(), gathered)
+    expected = (
+        (dot.bfloat16().float().clamp_min(0) * w.float()[..., None])
+        .bfloat16()
+        .float()
+        .sum(1)
+        .bfloat16()
+        .float()
+    )
+    valid = (logical >= 0) & (logical < lens[:, None]) & (logical < length)
+    expected.masked_fill_(~valid, float("-inf"))
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
