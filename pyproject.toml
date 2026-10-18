@@ -44,7 +44,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dsv41 = [
-    "flag_gems @ git+https://github.com/CherryLemon/FlagGems.git@6b9859855b13f2664261c1eac19c5ae57c9466dd",
+    "flag_gems @ git+https://github.com/CherryLemon/FlagGems.git@6720f4f11c4f345d5866114ea402caa5e7faba83",
     "tilelang==0.1.12",
 ]
 

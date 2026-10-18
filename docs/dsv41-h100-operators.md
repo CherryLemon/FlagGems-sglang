@@ -19,7 +19,7 @@ their owning FlagGems PRs.
 
 ## Exact dependency and opt-in installation
 
-The `dsv41` extra pins **FlagGems at `6b9859855b13f2664261c1eac19c5ae57c9466dd`** and TileLang
+The `dsv41` extra pins **FlagGems at `6720f4f11c4f345d5866114ea402caa5e7faba83`** and TileLang
 0.1.12. That immutable fork integration commit combines the two still-open
 FlagGems PRs for reproducible testing; it is not an upstream release. The
 pin must move to the corresponding upstream revision after both PRs merge.
