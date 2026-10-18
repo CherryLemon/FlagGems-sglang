@@ -28,6 +28,7 @@ bf16 head reduction, fp32 logits out.
 """
 
 import os
+from functools import lru_cache
 
 import torch
 import triton
@@ -816,6 +817,60 @@ def _fp4_index_logits_grouped_persistent_kernel(
         )
 
 
+def _use_native_fp8(
+    q, page_size, ratio, width, candidate_block_size, write_logits, query_group_size
+):
+    # These are the measured capacity/batch buckets, not a density assumption.
+    # Runtime Q/K eligibility, requests and lengths are checked on the device.
+    if (
+        os.getenv("FLAGGEMS_DSV41_INDEXER_FP8", "1") != "1"
+        or not _skip_invalid_tiles()
+        or query_group_size != 6
+        or tuple(q.shape[1:]) != (32, 128)
+        or page_size != 64
+        or triton.__version__.split("+")[0] not in ("3.6.0", "3.7.1")
+        or torch.cuda.get_device_capability(q.device) != (9, 0)
+    ):
+        return False
+    b = q.shape[0]
+    return (
+        ratio == 1
+        and width == 655627
+        and candidate_block_size == 8
+        and not write_logits
+        and b in (6, 12, 18, 24, 30, 36, 42, 48, 60, 72, 84, 96, 120, 192)
+    ) or (
+        ratio == 2
+        and width == 327813
+        and candidate_block_size == 0
+        and write_logits
+        and b in (6, 12, 18, 24, 30, 36, 42, 48, 60, 72, 84, 96, 120, 192)
+    )
+
+
+def _use_tle_native_fp8(batch, ratio):
+    # B6/r2's approximately 1% result was not stable under eight paired runs.
+    # This is a measured bucket dispatch, after the semantic/grouping gate.
+    return (
+        os.getenv("FLAGGEMS_DSV41_INDEXER_TLE", "1") == "1"
+        and triton.__version__.split("+")[0] == "3.6.0"
+        and batch in (6, 12, 18, 24, 30, 36, 42, 48, 60, 72, 84, 96, 120, 192)
+        and ratio in (1, 2)
+        and (batch, ratio) not in ((6, 1), (6, 2), (12, 1))
+    )
+
+
+@lru_cache(maxsize=1)
+def _tle_native_fp8():
+    # Resolve optional TLE/helper availability once, before Graph capture.
+    # Upstream Triton 3.6 and older FlagGems installations retain Gluon.
+    try:
+        from .dsv41_fp4_tle_indexer import fp4_index_logits_req_to_token
+    except ImportError:
+        return None
+    return fp4_index_logits_req_to_token
+
+
 def fp4_index_logits_req_to_token(
     q: torch.Tensor,
     weights: torch.Tensor,
@@ -842,6 +897,46 @@ def fp4_index_logits_req_to_token(
     assert req_to_token.dim() == 2 and req_to_token.stride(1) == 1
     assert table.dtype == torch.uint8 and table.dim() == 2
     assert ratio in (1, 2)
+    if (
+        table.stride(1) == 1
+        and table.stride(0) % 2 == 0
+        and table.data_ptr() % 2 == 0
+        and _use_native_fp8(
+            q,
+            page_size,
+            ratio,
+            width,
+            candidate_block_size,
+            write_logits,
+            query_group_size,
+        )
+    ):
+        # A missing new optional helper preserves the pinned BF16 installation.
+        try:
+            from flag_gems.fused.dsv41.fp4_fp8 import FP4_FP8_SCORE_ABI
+        except ImportError:
+            FP4_FP8_SCORE_ABI = 0
+        if FP4_FP8_SCORE_ABI == 2:
+            native_fp8 = _tle_native_fp8() if _use_tle_native_fp8(B, ratio) else None
+            if native_fp8 is None:
+                from .dsv41_fp4_fp8_indexer import (
+                    fp4_index_logits_req_to_token as native_fp8,
+                )
+
+            return native_fp8(
+                q,
+                weights,
+                req_to_token,
+                req,
+                lens,
+                table,
+                page_size,
+                ratio,
+                width,
+                candidate_block_size,
+                write_logits,
+                query_group_size,
+            )
     q = q.contiguous()
     weights = weights.to(torch.bfloat16).contiguous()
     req = req.to(torch.int64).contiguous()
