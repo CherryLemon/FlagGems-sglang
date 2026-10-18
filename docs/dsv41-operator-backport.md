@@ -3,7 +3,9 @@
 This patch supplies the native V4.1 kernel bindings, JIT headers and compatible
 operator implementations missing from SGLang v0.5.18. It installs no scheduler
 hook and has no dependency on the optimized FlagGems operator integration.
-H100 tuning and automatic operator replacement are reviewed separately.
+The native block-FP8 H100 configuration tables cover target and draft shapes,
+preserving their tile choices on the release backport. FlagGems kernel dispatch
+and operator replacement are supplied by the optimization integration.
 
 Install this repository and TileLang 0.1.12. In a clean SGLang v0.5.18 checkout,
 apply the SGLang-plugin-FL model/runtime backport and this kernel patch:

@@ -49,7 +49,7 @@ def test_patch_uses_native_entries_and_keeps_framework_boundary():
     assert "flag_gems" not in patch
     assert "flaggems_sglang.runtime" not in patch
     paths = re.findall(r"^diff --git a/(.*?) b/", patch, flags=re.M)
-    assert len(paths) == len(set(paths)) == 50
+    assert len(paths) == len(set(paths)) == 61
     assert all(
         "/kernels/" in path or "/models/deepseek_common/amd/" in path
         for path in paths
