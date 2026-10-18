@@ -19,7 +19,7 @@ their owning FlagGems PRs.
 
 ## Exact dependency and opt-in installation
 
-The `dsv41` extra pins **FlagGems at `934e482098d420bf75ce74b0ad35e12e825535e2`** and TileLang
+The `dsv41` extra pins **FlagGems at `6b9859855b13f2664261c1eac19c5ae57c9466dd`** and TileLang
 0.1.12. That immutable fork integration commit combines the two still-open
 FlagGems PRs for reproducible testing; it is not an upstream release. The
 pin must move to the corresponding upstream revision after both PRs merge.
@@ -61,6 +61,28 @@ The independent explicit-slot API is imported directly from FlagGems by the
 adapter; it is not re-registered as a framework-specific operator. Its
 packed format and numerical contract live in FlagGems. The fused paths
 preserve BF16 key/dot/product/head-sum rounding and FP32 logit storage.
+
+### Optional packed FP8 schedule on FlagTree 3.6
+
+The guarded FP8 path requires the common `FP4_FP8_SCORE_ABI=2` helpers and
+the explicit six-query semantic hint. Query and scale eligibility are
+recomputed on device on every replay; unsupported values use the BF16
+fallback. Batches divisible by six do not by themselves establish grouping.
+
+On FlagTree/Triton 3.6.0, the optional TLE schedule uses FlagGems' packed
+word decoder and retains the framework's fused request/slot/candidate
+layout. It selects 25 measured batch/ratio buckets from batches
+6/12/18/24/30/36/42/48/60/72/84/96/120/192 and ratios 1/2. B6-ratio1,
+B6-ratio2 and B12-ratio1 retain the Gluon FP8 schedule. Missing TLE or
+helper support, other compiler versions, and
+`FLAGGEMS_DSV41_INDEXER_TLE=0` also retain Gluon. Existing BF16 admission
+checks remain ahead of either FP8 schedule.
+
+The default TLE schedule is serial. Experimental warp-specialized kernels
+and compiler patches are not enabled by its dispatch. Install before Graph
+capture so optional helper resolution occurs during warmup. Qualification
+and performance of this new schedule are recorded separately from the
+historical serving results below.
 
 ## Source-pinned lifecycle
 
@@ -147,3 +169,37 @@ historical report. The 212-shape byte-parity check includes 324 FP8 dtype
 comparisons and 78 changed-input FP4 Graph replays. Small differences
 around 1.0x remain in the table. The common math and its configuration data
 were also audited against the measured pre-split source.
+
+
+## Prefill operators and numerical fixes
+
+Common prefill score math, exact post/combine, per-call mHC weight preparation,
+masked row quantization and SwiGLU/row quantization now live in FlagGems.
+`dsv41_fp8_prefill_candidates` retains compressed-candidate addressing and
+consumer column layout. `dsv41_w4a8_moe` qualifies the SGLang/Humming top-k-six
+physical row layout and passes the original Humming quantization helpers as
+explicit JIT callbacks to FlagGems. Its W2 schedule is qualified only for
+98,304 route rows; other shapes retain their original GEMM configuration.
+These prefill APIs do not automatically rewrite model methods.
+
+The `stable-topk` offline profile gives equal scores a logical-index tie key.
+It fixes candidate membership for the qualified radix tie pool of at most
+2,048 entries; downstream canonical index sorting remains required. Pool
+overflow and NaN scoring are not newly qualified. This is a precision fix:
+the measured 75-row Graph microbenchmark increased from 7.18 to 9.09 us.
+
+The `flagtree36-metadata` profile rewrites SGLang's ragged/padded prefill
+metadata kernel for the qualified Triton 3.6 interface. It is an operator
+compatibility patch, not a FlagTree compiler modification. Both profiles
+verify complete source/output hashes and run offline before worker startup:
+
+```bash
+python -m flaggems_sglang_plugin.apply_operator_patches /path/to/site-packages stable-topk
+python -m flaggems_sglang_plugin.apply_operator_patches /path/to/site-packages flagtree36-metadata
+```
+
+Original TopK qualification covered repeated real tie rows, 35 boundary,
+ragged/paged and changed-input Graph cases, and Compute Sanitizer with no
+errors. Repackaged patch application is checked separately on CPU. The new
+prefill API boundaries and callback extraction still need a fresh GPU run
+before readiness; earlier GPU results apply to the recorded original sources.

@@ -44,7 +44,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dsv41 = [
-    "flag_gems @ git+https://github.com/CherryLemon/FlagGems.git@934e482098d420bf75ce74b0ad35e12e825535e2",
+    "flag_gems @ git+https://github.com/CherryLemon/FlagGems.git@6b9859855b13f2664261c1eac19c5ae57c9466dd",
     "tilelang==0.1.12",
 ]
 
@@ -68,6 +68,8 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
+"flaggems_sglang_plugin" = ["patches/*.patch", "patches/*.json"]
+
 "flaggems_sglang.runtime" = ["*/**/*.yaml"]
 
 [tool.scikit-build]

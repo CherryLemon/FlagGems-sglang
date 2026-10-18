@@ -1,0 +1,81 @@
+--- a/sglang/kernels/jit/include/sgl_kernel/deepseek_v4/topk_impl.cuh
++++ b/sglang/kernels/jit/include/sgl_kernel/deepseek_v4/topk_impl.cuh
+@@ -349,7 +349,9 @@
+     const auto warp_id = broadcast(tx / kWarpSize);
+ 
+     bool active[kItems];
+-    uint32_t key[kItems];
++    // Stable boundary: score descending, then raw logical index ascending.
++    // A score-only final atomic reservation can select different equal-score keys.
++    uint64_t key[kItems];
+     uint32_t idx[kItems];
+     uint32_t write_pos[kItems];
+ #pragma unroll
+@@ -357,7 +359,7 @@
+       const auto t = tx + i * kBlockSize;
+       active[i] = t < num_ties;
+       const auto tie = active[i] ? tie_buffer[t] : TieValue::invalid();
+-      key[i] = extract_exact_bin(tie.value);
++      key[i] = (uint64_t(extract_exact_bin(tie.value)) << 32) | uint64_t(0xFFFFFFFFu - tie.idx);
+       idx[i] = tie.idx;
+       write_pos[i] = topk;
+     }
+@@ -368,8 +370,8 @@
+     uint32_t total_active = num_ties;
+ 
+ #pragma unroll
+-    for (int round = 0; round < 4; round++) {
+-      const uint32_t shift = 24 - round * 8;
++    for (int round = 0; round < 8; round++) {
++      const uint32_t shift = 56 - round * 8;
+       const auto hist_idx = round % 2;
+       const auto histogram = smem->histogram[hist_idx];
+ 
+@@ -377,7 +379,7 @@
+       for (uint32_t i = 0; i < kItems; ++i) {
+         if (active[i]) atomicAdd(&histogram[(key[i] >> shift) & 0xFFu], 1);
+       }
+-      if (round < 3 && tx < kRadixSize) {
++      if (round < 7 && tx < kRadixSize) {
+         smem->histogram[hist_idx ^ 1][tx] = 0;
+       }
+       __syncthreads();
+@@ -402,7 +404,7 @@
+       __syncthreads();
+ 
+       const auto [threshold_bin, above_count, equal_count] = smem->match;
+-      if (round < 3) total_active = equal_count;
++      if (round < 7) total_active = equal_count;
+       topk_remain -= above_count;
+ 
+       // 4. Scatter
+@@ -415,13 +417,13 @@
+           active[i] = false;
+         } else if (bin < threshold_bin) {
+           active[i] = false;
+-        } else if (round == 3) {
++        } else if (round == 7) {
+           write_pos[i] = topk - topk_remain + atomicAdd(&smem->counter_final, 1);
+         }
+-        // my_bin == thr && round < 3: stay active for next round
+-      }
+-
+-      if (round == 3 || topk_remain == 0) break;
++        // my_bin == thr && round < 7: stay active for next round
++      }
++
++      if (round == 7 || topk_remain == 0) break;
+     }
+ 
+ #pragma unroll
+--- a/sglang/kernels/ops/attention/dsv4/topk.py
++++ b/sglang/kernels/ops/attention/dsv4/topk.py
+@@ -49,7 +49,7 @@
+         ]
+     kernel = f"TopKKernel<{args}>"
+     return load_jit(
+-        make_name("topk_v2"),
++        make_name("topk_v2_stable_ties"),
+         *args,
+         extra_cuda_cflags=extra_cuda_cflags,
+         cuda_files=["deepseek_v4/topk_v2.cuh"],
