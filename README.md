@@ -1,5 +1,8 @@
 [English|[中文版](./README_cn.md)] [![basic ci](https://github.com/flagos-ai/FlagGems-sglang/actions/workflows/basic-ci.yml/badge.svg)](https://github.com/flagos-ai/FlagGems-sglang/actions/workflows/basic-ci.yml)
 
+The [DeepSeek V4.1 operator backport](docs/dsv41-operator-backport.md) supplies
+native SGLang v0.5.18 kernel compatibility; H100 tuning is a separate change.
+
 ## Introduction
 
 FlagGems-sglang is part of [FlagOS](https://flagos.io/).
