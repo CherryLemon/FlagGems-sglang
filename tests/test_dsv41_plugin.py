@@ -32,8 +32,9 @@ def fresh():
     return module
 
 
-def test_disabled_entry_does_not_import_gpu_or_sglang(monkeypatch):
-    monkeypatch.delenv("FLAGGEMS_SGLANG_DSV41", raising=False)
+def test_discovery_without_scheduler_does_not_import_gpu_or_sglang(
+    monkeypatch,
+):
     p = fresh()
     before = set(sys.modules)
     p.load_plugin()
@@ -50,13 +51,14 @@ def test_device_is_set_before_operator_install(monkeypatch):
     )
     fake_torch = types.ModuleType("torch")
     fake_torch.cuda = types.SimpleNamespace(
-        set_device=lambda device: events.append(("device", device))
+        is_available=lambda: True,
+        get_device_capability=lambda: (9, 0),
+        set_device=lambda device: events.append(("device", device)),
     )
     monkeypatch.setitem(
         sys.modules, "sglang.srt.managers.scheduler", scheduler
     )
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    monkeypatch.setenv("FLAGGEMS_SGLANG_DSV41", "1")
     monkeypatch.setattr(p, "install", lambda: events.append("install"))
     p.load_plugin()
     assert scheduler.configure_scheduler_process(None, 5) == 3
@@ -79,6 +81,34 @@ def test_uninstall_preserves_subsequent_owner(monkeypatch):
     handle.uninstall()
     assert module.a is old and module.b is other and p._handle is None
     handle.uninstall()
+
+
+@pytest.mark.parametrize(
+    "available, capability", [(False, None), (True, (8, 0))]
+)
+def test_other_platforms_keep_native_scheduler(
+    monkeypatch, available, capability
+):
+    p = fresh()
+    scheduler = types.ModuleType("sglang.srt.managers.scheduler")
+    scheduler.configure_scheduler_process = lambda *a, **k: "native"
+    fake_torch = types.ModuleType("torch")
+    devices = []
+    fake_torch.cuda = types.SimpleNamespace(
+        is_available=lambda: available,
+        set_device=devices.append,
+        get_device_capability=lambda: capability,
+    )
+    monkeypatch.setitem(sys.modules, scheduler.__name__, scheduler)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    def unexpected():
+        raise AssertionError("SM90 adapter installed on another platform")
+
+    monkeypatch.setattr(p, "install", unexpected)
+    p.load_plugin()
+    assert scheduler.configure_scheduler_process(None, 2) == "native"
+    assert devices == ([2] if available else [])
 
 
 def test_unknown_source_fails_before_any_rebind(monkeypatch, tmp_path):
@@ -130,6 +160,7 @@ def mock_reviewed_install(monkeypatch, tmp_path, plugin, *, abi=1):
         pins[module_name] = hashlib.sha256(file.read_bytes()).hexdigest()
         modules[module_name] = module
         monkeypatch.setitem(sys.modules, module_name, module)
+    monkeypatch.setattr(plugin, "_install_w4a8", lambda: None)
     monkeypatch.setattr(plugin, "_SOURCE_PINS", pins)
     monkeypatch.setattr(
         plugin.importlib, "import_module", lambda name: modules[name]

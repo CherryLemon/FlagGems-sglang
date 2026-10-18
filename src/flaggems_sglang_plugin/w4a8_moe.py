@@ -6,49 +6,34 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
-"""Explicit, default-off adapter for the frozen historical R9 W4A8 fork.
+"""Source-qualified W4A8 masked MoE scheduling for SM90.
 
-Call install() before model construction / Graph capture after explicitly
-enabling FLAGGEMS_SGLANG_W4A8_MOE=1 and the four existing experiment flags.
-This module is not registered by the current-main plugin entry point. The
-source pins intentionally reject a current-main or collector-modified runner.
-Uninstall restores owned Python bindings; captured Graphs require recapture.
+Install before model construction / Graph capture. Actual layer metadata
+selects W4A8; the adapter does not change the model's quantization settings.
 """
 
-import contextvars
 import copy
 import functools
 import hashlib
 import importlib
 import importlib.metadata
+import importlib.util
 import json
-import os
 from pathlib import Path
 
 from ._w4a8_native_tactics import BASELINE_TACTICS
 
-ENV = "FLAGGEMS_SGLANG_W4A8_MOE"
-REQUIRED_FLAGS = (
-    "SGLANG_EXPERIMENTAL_HUMMING_CF32_NOSTREAMK_R10",
-    "SGLANG_EXPERIMENTAL_HUMMING_W4A8_BF16WIRE_R18",
-    "SGLANG_EXPERIMENTAL_HUMMING_W4A8_W2_STORE_R24",
-    "SGLANG_EXPERIMENTAL_HUMMING_W4A8_W13_GEMM_R24",
-)
 SOURCE_PINS = {
     "humming.py": "bafde29ff520355908778585ac0b49751e8c3f88ca28a30f6c818559a3c6a15a",
     "r18_masked_group0.py": "5b68900d27c7417276a47b311b5b55846447f860efb4a50c4876ada1dcf5b971",
     "r18_w4a8_contract.py": "0d277ec7e525a50adfc0d10ef2aa691df34dc069ae84a7f68d66cd40482015e6",
     "r19_masked_swiglu.py": "eece18dc9012ebfa40ef76e5194fd4f9b7e1347246639e088e338262c9b13a9c",
-    "r10_humming_numerics.py": "8fa998f5fdcd8beeb1b2cf66d5affc4948fcde2320e1908f68c8721f0badc4dd",
-    "r24_native_a8_w13_tuning.py": "4e63c3b41142816d25a0f1c98368a15ad98c529e661fc8fcf4af4a521c2d6678",
-    "r24_native_a8_w2_tuning.py": "5f4eee8f2bf240b3f62630ee340467bea8e3425192f6ee84fa608a7a2335738e",
 }
 MATH_PINS = {
     "calc_scale": "b53a57f1529ff453206930a478af9dbff286c038ea255b38073bba4bfcd8baf1",
     "finalize_scale": "b4b5d86a8e16c8958ff9161e8b96628a673b711ed49c898736dbbe084c1fd163",
     "quant_tensor": "7e33e8d6e93291b8d14179f9e5496073d632d9643d6d6406b90d3719f2afd464",
 }
-_context = contextvars.ContextVar("flaggems_w4a8_moe", default=None)
 _handle = None
 
 
@@ -91,9 +76,13 @@ def tune_table(table, e, stage):
             out.append((cursor, upper, copy.deepcopy(original)))
     # Exact point completeness also prevents a partially changed table.
     for point in _points(e):
-        matched = [t for lo, hi, t in out if lo < point <= (hi if hi > 0 else 1 << 62)]
+        matched = [
+            t for lo, hi, t in out if lo < point <= (hi if hi > 0 else 1 << 62)
+        ]
         if len(matched) != 1 or matched[0].get("use_tma_c") is not False:
-            raise ValueError("Native tactic table has gaps or overlapping intervals")
+            raise ValueError(
+                "Native tactic table has gaps or overlapping intervals"
+            )
     return out
 
 
@@ -101,12 +90,16 @@ def _eligible(runner, hidden, ids, counts, expected_m, input_scale):
     import torch
 
     e = getattr(runner, "num_experts", None)
-    if (getattr(runner, "global_num_experts", None), e) not in ((384, 48), (128, 16)):
+    if (getattr(runner, "global_num_experts", None), e) not in (
+        (384, 48),
+        (128, 16),
+    ):
         return None
     layer = runner.layer
     if (
         getattr(layer, "_dsv4_mxfp4_backend", None) != "humming"
-        or getattr(layer, "_humming_uses_deepep_fp8_dispatch", None) is not False
+        or getattr(layer, "_humming_uses_deepep_fp8_dispatch", None)
+        is not False
     ):
         return None
     if (
@@ -115,7 +108,10 @@ def _eligible(runner, hidden, ids, counts, expected_m, input_scale):
         or input_scale is not None
     ):
         return None
-    if tuple(hidden.shape) != (e, 1024, 5120) or hidden.dtype != torch.bfloat16:
+    if (
+        tuple(hidden.shape) != (e, 1024, 5120)
+        or hidden.dtype != torch.bfloat16
+    ):
         return None
     topk = 6 if e == 48 else 3
     if (
@@ -155,7 +151,9 @@ def _eligible(runner, hidden, ids, counts, expected_m, input_scale):
             "use_fused_e8m0_scale": True,
             "use_packed_k_layout": False,
         }
-        if any(getattr(m, key, None) != value for key, value in expected.items()):
+        if any(
+            getattr(m, key, None) != value for key, value in expected.items()
+        ):
             return None
         if any(
             str(getattr(m, key, None)) != value
@@ -169,7 +167,8 @@ def _eligible(runner, hidden, ids, counts, expected_m, input_scale):
         ):
             return None
         if any(
-            getattr(getattr(m, key, None), "value", getattr(m, key, None)) != value
+            getattr(getattr(m, key, None), "value", getattr(m, key, None))
+            != value
             for key, value in {
                 "mma_type": "wgmma",
                 "weight_scale_type": "group",
@@ -193,17 +192,145 @@ class Installation:
             _handle = None
 
 
-def install():
-    """Install only the exact experimental source and compiler/runtime tuple."""
-    global _handle
-    if os.environ.get(ENV) != "1":
+def install_if_supported():
+    """Use the historical adapter when its runner interface is present."""
+    name = "sglang.srt.layers.moe.moe_runner.humming"
+    try:
+        spec = importlib.util.find_spec(name)
+    except ModuleNotFoundError as exc:
+        if name == exc.name or name.startswith(exc.name + "."):
+            return None
+        raise
+    if spec is None or spec.origin is None:
         return None
+    root = Path(spec.origin).parent
+    if not (root / "r18_w4a8_contract.py").is_file():
+        return None
+    return install()
+
+
+def _configs(runner, experts):
+    cached = getattr(runner, "_flaggems_w4a8_configs", None)
+    if cached is not None:
+        return cached
+    compute = {"gemm_type": "grouped_masked", "use_f16_accum": False}
+    result = {
+        "compute_config": compute,
+        "compute_config_str": json.dumps(compute),
+    }
+    points = _points(experts)
+    for stage in ("w13", "w2"):
+        table = [
+            (
+                0 if i == 0 else points[i - 1],
+                point,
+                copy.deepcopy(BASELINE_TACTICS[f"{experts}/{stage}/{point}"]),
+            )
+            for i, point in enumerate(points)
+        ]
+        tuned = tune_table(table, experts, stage)
+        result[stage + "_tuning_config"] = tuned
+        result[stage + "_tuning_config_str"] = json.dumps(tuned)
+    runner._flaggems_w4a8_configs = result
+    return result
+
+
+def _run_w4a8(
+    runner,
+    hidden,
+    ids,
+    counts,
+    expected_m,
+    ctx,
+    *,
+    torch,
+    method,
+    gemm_type,
+    contract,
+    quant_module,
+    activation,
+    quant,
+):
+    # Preserve native workspace allocation and its two separate activation /
+    # quantization writes: their aliased storage cannot be fused in place.
+    _, experts, hint = ctx
+    configs = _configs(runner, experts)
+    contract.validate_configs(configs)
+    contract.validate_wire(runner.layer, hidden, None, counts)
+    flat = hidden.view(-1, hidden.shape[-1])
+    buffers = runner.prepare_buffers(
+        hidden_states=flat,
+        topk_ids=ids,
+        gemm_type=gemm_type,
+    )
+    rows = flat.shape[0]
+    for key in ("r18_fc1_scale", "r18_fc2_scale"):
+        if key not in buffers:
+            buffers[key] = torch.empty(
+                (rows, 1), dtype=torch.float32, device=hidden.device
+            )
+
+    def quantize(inputs, output, scales):
+        if hint == _points(experts)[0]:
+            return quant_module.masked_quant(
+                inputs,
+                output,
+                scales,
+                counts,
+                config=quant_module.Config("compact", 16, 8),
+            )
+        return quant(inputs, output, scales, counts)
+
+    inputs, scales = quantize(
+        hidden,
+        buffers["quanted_gate_up_input"],
+        buffers["r18_fc1_scale"],
+    )
+    contract.validate_stage(runner.layer, inputs, scales, "w13")
+    method.forward_layer(
+        layer=runner.layer,
+        inputs=inputs,
+        input_scale=scales,
+        outputs=buffers["gate_up_output"],
+        valid_shape_m=hint,
+        expert_layout=counts,
+        compute_config=configs["compute_config_str"],
+        tuning_config=configs["w13_tuning_config_str"],
+        sublayer_name="w13",
+    )
+    gate_up = buffers["gate_up_output"].view(experts, hidden.shape[1], -1)
+    activation.masked_act_and_mul(
+        gate_up,
+        buffers["activation_output"],
+        counts,
+        swiglu_limit=10.0,
+        config=activation.LaunchConfig("compact", 512, 4, 16),
+    )
+    inputs, scales = quantize(
+        buffers["activation_output"].view(experts, hidden.shape[1], -1),
+        buffers["quanted_down_input"],
+        buffers["r18_fc2_scale"],
+    )
+    contract.validate_stage(runner.layer, inputs, scales, "w2")
+    method.forward_layer(
+        layer=runner.layer,
+        inputs=inputs,
+        input_scale=scales,
+        outputs=buffers["down_output"].view(-1, hidden.shape[-1]),
+        valid_shape_m=hint,
+        expert_layout=counts,
+        compute_config=configs["compute_config_str"],
+        tuning_config=configs["w2_tuning_config_str"],
+        sublayer_name="w2",
+    )
+    return buffers["down_output"]
+
+
+def install():
+    """Install the measured schedules on the qualified runner/runtime."""
+    global _handle
     if _handle is not None:
         return _handle
-    if any(os.environ.get(key) != "1" for key in REQUIRED_FLAGS):
-        raise ValueError(
-            "W4A8 adapter requires the four existing R10/R18/R24 experiment flags"
-        )
     import torch
     import triton
 
@@ -234,7 +361,10 @@ def install():
     import humming
 
     if (
-        _sha(Path(humming.__file__).parent / "_native/x86_64/libhumming_launcher.so")
+        _sha(
+            Path(humming.__file__).parent
+            / "_native/x86_64/libhumming_launcher.so"
+        )
         != "97623b4157123f59bd8506727f7b52a9d8f934ebdc9329bbd5db164af5b088ff"
     ):
         raise RuntimeError("Unreviewed native Humming launcher")
@@ -242,7 +372,10 @@ def install():
 
     math = (calc_scale, finalize_scale, quant_tensor)
     for fn in math:
-        if hashlib.sha256(fn.src.encode()).hexdigest() != MATH_PINS[fn.__name__]:
+        if (
+            hashlib.sha256(fn.src.encode()).hexdigest()
+            != MATH_PINS[fn.__name__]
+        ):
             raise RuntimeError("Unreviewed native quant math: " + fn.__name__)
     from flag_gems.fused.dsv41.masked_row_quant import (
         MASKED_ROW_QUANT_ABI,
@@ -252,16 +385,25 @@ def install():
     if MASKED_ROW_QUANT_ABI != 1:
         raise RuntimeError("Incompatible FlagGems masked row quant ABI")
     contract = importlib.import_module(pkg + ".r18_w4a8_contract")
-    contract.validate_configuration()
-    if not contract.ENABLED:
-        raise RuntimeError("R18 must be enabled before importing the runner")
     quant_module = importlib.import_module(pkg + ".r18_masked_group0")
+    activation = importlib.import_module(pkg + ".r19_masked_swiglu")
     cls = runner_module.HummingRunnerCore
-    original_run = cls._run_grouped_masked_gemm
-    original_configs = cls.get_humming_gemm_configs
-    original_quant = quant_module.masked_quant
+    original = cls._run_grouped_masked_gemm
 
-    @functools.wraps(original_run)
+    def quant(inputs, quanted, scales, counts):
+        return masked_row_quant(
+            inputs,
+            quanted,
+            scales,
+            counts,
+            calc_scale=math[0],
+            finalize_scale=math[1],
+            quant_tensor=math[2],
+            workers=132,
+            num_warps=4,
+        )
+
+    @functools.wraps(original)
     def run(
         self,
         hidden_states,
@@ -279,9 +421,8 @@ def install():
             expected_m,
             hidden_states_scale,
         )
-        token = _context.set(ctx)
-        try:
-            return original_run(
+        if ctx is None:
+            return original(
                 self,
                 hidden_states,
                 topk_ids,
@@ -290,71 +431,22 @@ def install():
                 expected_m,
                 hidden_states_scale,
             )
-        finally:
-            _context.reset(token)
-
-    @functools.wraps(original_configs)
-    def configs(self, gemm_type):
-        native = original_configs(self, gemm_type)
-        ctx = _context.get()
-        if (
-            ctx is None
-            or ctx[0] is not self
-            or getattr(gemm_type, "value", gemm_type) != "grouped_masked"
-        ):
-            return native
-        if native["compute_config"] != {
-            "gemm_type": "grouped_masked",
-            "use_f16_accum": False,
-        }:
-            raise ValueError(
-                "W4A8 adapter requires original grouped-masked FP32 compute"
-            )
-        cache = getattr(self, "_flaggems_w4a8_configs", None)
-        if cache is not None and cache[0] is native:
-            return cache[1]
-        changed = copy.deepcopy(native)
-        for stage in ("w13", "w2"):
-            table = tune_table(native[stage + "_tuning_config"], ctx[1], stage)
-            changed[stage + "_tuning_config"] = table
-            changed[stage + "_tuning_config_str"] = json.dumps(table)
-        self._flaggems_w4a8_configs = (native, changed)
-        return changed
-
-    @functools.wraps(original_quant)
-    def quant(inputs, quanted, scales, masked_m, *, config=None):
-        ctx = _context.get()
-        if ctx is None or ctx[2] == (48 if ctx[1] == 48 else 16):
-            return original_quant(inputs, quanted, scales, masked_m, config=config)
-        if config is None or (config.kind, config.row_splits, config.num_warps) != (
-            "compact",
-            16,
-            8,
-        ):
-            raise ValueError("Original compact16w8 launch contract changed")
-        if tuple(inputs.shape[:2]) != (ctx[1], 1024) or inputs.shape[-1] not in (
-            5120,
-            2304,
-        ):
-            raise ValueError("Unreviewed live expert row geometry")
-        return masked_row_quant(
-            inputs,
-            quanted,
-            scales,
-            masked_m,
-            calc_scale=math[0],
-            finalize_scale=math[1],
-            quant_tensor=math[2],
-            workers=132,
-            num_warps=4,
+        return _run_w4a8(
+            self,
+            hidden_states,
+            topk_ids,
+            expert_num_tokens,
+            expected_m,
+            ctx,
+            torch=torch,
+            method=runner_module.HummingMethod,
+            gemm_type=runner_module.HummingGemmType.GROUPED_MASKED,
+            contract=contract,
+            quant_module=quant_module,
+            activation=activation,
+            quant=quant,
         )
 
-    bindings = [
-        (cls, "_run_grouped_masked_gemm", original_run, run),
-        (cls, "get_humming_gemm_configs", original_configs, configs),
-        (quant_module, "masked_quant", original_quant, quant),
-    ]
-    for module, name, old, new in bindings:
-        setattr(module, name, new)
-    _handle = Installation(bindings)
+    cls._run_grouped_masked_gemm = run
+    _handle = Installation([(cls, "_run_grouped_masked_gemm", original, run)])
     return _handle

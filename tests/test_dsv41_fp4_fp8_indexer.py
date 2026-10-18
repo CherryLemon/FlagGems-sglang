@@ -85,7 +85,9 @@ def test_native_only_edges_and_instruction_evidence(monkeypatch, ratio, width):
 
 
 @pytest.mark.parametrize("ratio", [1, 2])
-def test_graph_replay_refreshes_eligibility_requests_lengths(monkeypatch, ratio):
+def test_graph_replay_refreshes_eligibility_requests_lengths(
+    monkeypatch, ratio
+):
     xs = _args(257, ratio)
     capture = _Capture(native._native)
     monkeypatch.setattr(native, "_native", capture)
@@ -129,17 +131,21 @@ def test_unaligned_tables_keep_byte_addressed_bf16(monkeypatch, odd_stride):
     table = xs[5]
     if odd_stride:
         storage = torch.empty(
-            (table.shape[0], table.shape[1] + 1), dtype=torch.uint8, device="cuda"
+            (table.shape[0], table.shape[1] + 1),
+            dtype=torch.uint8,
+            device="cuda",
         )
         xs[5] = storage[:, :-1]
     else:
-        storage = torch.empty(table.numel() + 1, dtype=torch.uint8, device="cuda")
+        storage = torch.empty(
+            table.numel() + 1, dtype=torch.uint8, device="cuda"
+        )
         xs[5] = storage[1:].reshape_as(table)
     xs[5].copy_(table)
     xs[-1] = 655627
-    monkeypatch.setenv("FLAGGEMS_DSV41_INDEXER_FP8", "0")
-    expected = _call(control, xs)
-    monkeypatch.setenv("FLAGGEMS_DSV41_INDEXER_FP8", "1")
+    with monkeypatch.context() as baseline:
+        baseline.setattr(control, "_use_native_fp8", lambda *args: False)
+        expected = _call(control, xs)
 
     def unexpected(*args, **kwargs):
         raise AssertionError("unaligned storage entered uint16 native loader")
@@ -171,7 +177,9 @@ def test_dense_graph_replay_defines_allocated_row_padding():
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph):
         out = _call(native, xs)
-    full = torch.as_strided(out, (out.shape[0], out.stride(0)), (out.stride(0), 1))
+    full = torch.as_strided(
+        out, (out.shape[0], out.stride(0)), (out.stride(0), 1)
+    )
     for length in [129, 0, 1, 129]:
         full.fill_(float("nan"))
         xs[4].fill_(length)
@@ -188,9 +196,9 @@ def test_previous_optional_math_abi_preserves_bf16(monkeypatch):
 
     xs = _args(257, 1)
     xs[-1] = 655627
-    monkeypatch.setenv("FLAGGEMS_DSV41_INDEXER_FP8", "0")
-    expected = _call(control, xs)
-    monkeypatch.setenv("FLAGGEMS_DSV41_INDEXER_FP8", "1")
+    with monkeypatch.context() as baseline:
+        baseline.setattr(control, "_use_native_fp8", lambda *args: False)
+        expected = _call(control, xs)
     monkeypatch.setattr(math, "FP4_FP8_SCORE_ABI", 1)
 
     def unexpected(*args, **kwargs):

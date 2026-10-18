@@ -1,6 +1,6 @@
 # DeepSeek V4.1 SM90 SGLang integration
 
-This opt-in adapter replaces reviewed native SGLang entry points before
+This adapter replaces reviewed native SGLang entry points before
 model construction and CUDA Graph capture. Implementation ownership follows
 the interface and data layout, independently of operator name, model family,
 source provenance or implementation language.
@@ -17,9 +17,9 @@ There are no private FP8 GEMM, mHC kernels or H100 configuration copies in
 this repository. Their numerical tests and standalone benchmarks accompany
 their owning FlagGems PRs.
 
-## Exact dependency and opt-in installation
+## Dependency and installation
 
-The `dsv41` extra pins **FlagGems at `6720f4f11c4f345d5866114ea402caa5e7faba83`** and TileLang
+The `dsv41` extra pins **FlagGems at `2f21e073d272accb6c54666e7b5611e25c00d1dc`** and TileLang
 0.1.12. That immutable fork integration commit combines the two still-open
 FlagGems PRs for reproducible testing; it is not an upstream release. The
 pin must move to the corresponding upstream revision after both PRs merge.
@@ -28,15 +28,14 @@ Changing that contract requires explicit review in both repositories.
 
 ```bash
 pip install '.[dsv41]'
-FLAGGEMS_SGLANG_DSV41=1 \
-SGLANG_PLUGINS=flaggems_dsv41 \
 DNN_VENDOR=nvidia ARCH=sm_90 \
 python -m sglang.launch_server ...
 ```
 
-The extra is optional. Importing the default-off plugin does not import
-Torch/CUDA/FlagGems. Importing the framework operator package does not
-require the extra until a V4.1 fusion entry is invoked. Backend vendor and
+The installed plugin registers its scheduler hook automatically. No experiment
+flags are required. Discovery does not import Torch/CUDA/FlagGems; operator
+installation runs after device selection on SM90 schedulers. Importing the
+framework operator package does not require the extra until a V4.1 fusion entry is invoked. Backend vendor and
 architecture imports use this package's complete namespace, avoiding bare
 `_nvidia`/`hopper` module-cache collisions when the two libraries coexist.
 Both library import orders are regression-tested.
@@ -62,21 +61,21 @@ adapter; it is not re-registered as a framework-specific operator. Its
 packed format and numerical contract live in FlagGems. The fused paths
 preserve BF16 key/dot/product/head-sum rounding and FP32 logit storage.
 
-### Optional packed FP8 schedule on FlagTree 3.6
+### Packed FP8 schedule on FlagTree 3.6
 
 The guarded FP8 path requires the common `FP4_FP8_SCORE_ABI=2` helpers and
 the explicit six-query semantic hint. Query and scale eligibility are
 recomputed on device on every replay; unsupported values use the BF16
 fallback. Batches divisible by six do not by themselves establish grouping.
 
-On FlagTree/Triton 3.6.0, the optional TLE schedule uses FlagGems' packed
+On FlagTree/Triton 3.6.0, the TLE schedule uses FlagGems' packed
 word decoder and retains the framework's fused request/slot/candidate
 layout. It selects 25 measured batch/ratio buckets from batches
 6/12/18/24/30/36/42/48/60/72/84/96/120/192 and ratios 1/2. B6-ratio1,
 B6-ratio2 and B12-ratio1 retain the Gluon FP8 schedule. Missing TLE or
-helper support, other compiler versions, and
-`FLAGGEMS_DSV41_INDEXER_TLE=0` also retain Gluon. Existing BF16 admission
-checks remain ahead of either FP8 schedule.
+helper support and other compiler versions retain Gluon. Device eligibility
+checks retain BF16 for values that FP8 cannot represent exactly. Invalid-tile
+skipping and the measured FP8/TLE schedules are enabled by normal dispatch.
 
 The default TLE schedule is serial. Experimental warp-specialized kernels
 and compiler patches are not enabled by its dispatch. Install before Graph
@@ -211,12 +210,16 @@ before readiness; earlier GPU results apply to the recorded original sources.
 masked-row launch and native W13/W2 tactic selection for the historical W4A8
 runner. It calls the common `flag_gems.fused.dsv41.masked_row_quant` core and
 keeps original allocations, numeric helpers and physical expert/capacity rows.
-It installs only three owned Python bindings before Graph capture and restores
-them by identity. It is default-off, is not registered by the main plugin, and
-requires the exact historical source pins, four experiment flags, Torch
-2.13/cu130, FlagTree 0.7.0+gite86aa7cf and Humming 0.1.12. Current-main runners
-are intentionally rejected. Existing captured Graphs require recapture after
-uninstalling the adapter.
+The main plugin installs its owned grouped-masked runner binding when the
+historical runner interface is present. Actual W4A8 metadata and measured
+hints select the optimized path. The adapter supplies explicit FP32/no-StreamK
+compute settings, the captured W13/W2 tactics, masked quantization and the
+native two-step activation/quantization sequence. It does not depend on
+experiment flags or change layer precision. Other layouts use the native
+runner. The historical interface requires its source pins, Torch 2.13/cu130,
+FlagTree 0.7.0+gite86aa7cf and Humming 0.1.12. Current-main runners use the main
+operator adapter. Uninstall restores bindings by identity; captured Graphs
+require recapture.
 
 This is native-W4A8 operator parity qualification; it does not establish W4A8
 versus W4A16 model-quality parity or enable W4A8 as a serving default. Historical

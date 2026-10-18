@@ -27,7 +27,6 @@ Numerics follow the torch reference path: bf16 dot, bf16 relu/weight product,
 bf16 head reduction, fp32 logits out.
 """
 
-import os
 from functools import lru_cache
 
 import torch
@@ -49,10 +48,6 @@ def _load_fp4_math():
             raise RuntimeError("incompatible FlagGems FP4 index-score ABI")
         _e2m1_decode = fp4_indexer._e2m1_decode
         fp4_weighted_head_score = fp4_indexer.fp4_weighted_head_score
-
-
-def _skip_invalid_tiles():
-    return os.getenv("FLAGGEMS_DSV41_INDEXER_SKIP_INVALID_TILES", "1") == "1"
 
 
 INDEX_HEAD_DIM = 128
@@ -86,7 +81,6 @@ def _fp4_index_logits_kernel(
     H: tl.constexpr,
     HALF_D: tl.constexpr,  # D // 2 == 64 nibble-pairs per row
     BLOCK_L: tl.constexpr,
-    SKIP_INVALID: tl.constexpr,
     RATIO: tl.constexpr,
     USE_REQ_TO_TOKEN: tl.constexpr,
     USE_CANDIDATE_BLOCKS: tl.constexpr,
@@ -103,26 +97,25 @@ def _fp4_index_logits_kernel(
     )  # byte index i holds elements 2i (low nibble), 2i+1 (high nibble)
 
     n_vis = tl.load(lens_ptr + b)
-    if SKIP_INVALID:
-        if lb * BLOCK_L >= tl.minimum(n_vis, L):
-            if WRITE_LOGITS:
-                tl.store(
-                    out_ptr + b * stride_out + offs_l,
-                    -float("inf"),
-                    offs_l < L,
-                )
-            if WRITE_CANDIDATES:
-                nblocks = (L + CANDIDATE_BLOCK_SIZE - 1) // CANDIDATE_BLOCK_SIZE
-                block_ids = lb * (BLOCK_L // CANDIDATE_BLOCK_SIZE) + tl.arange(
-                    0, BLOCK_L // CANDIDATE_BLOCK_SIZE
-                )
-                tl.store(
-                    candidate_scores_ptr + b * candidate_score_stride + block_ids,
-                    -float("inf"),
-                    block_ids < nblocks,
-                )
-                tl.store(candidate_lens_ptr + b, 0, mask=lb == 0)
-            return
+    if lb * BLOCK_L >= tl.minimum(n_vis, L):
+        if WRITE_LOGITS:
+            tl.store(
+                out_ptr + b * stride_out + offs_l,
+                -float("inf"),
+                offs_l < L,
+            )
+        if WRITE_CANDIDATES:
+            nblocks = (L + CANDIDATE_BLOCK_SIZE - 1) // CANDIDATE_BLOCK_SIZE
+            block_ids = lb * (BLOCK_L // CANDIDATE_BLOCK_SIZE) + tl.arange(
+                0, BLOCK_L // CANDIDATE_BLOCK_SIZE
+            )
+            tl.store(
+                candidate_scores_ptr + b * candidate_score_stride + block_ids,
+                -float("inf"),
+                block_ids < nblocks,
+            )
+            tl.store(candidate_lens_ptr + b, 0, mask=lb == 0)
+        return
     valid = offs_l < tl.minimum(n_vis, L)
     if USE_CANDIDATE_BLOCKS:
         block_col = offs_l // CANDIDATE_BLOCK_SIZE
@@ -149,16 +142,19 @@ def _fp4_index_logits_kernel(
         ).to(tl.int64)
         slot = slot // RATIO
     else:
-        slot = tl.load(slots_ptr + b * L + offs_l, mask=offs_l < L, other=0).to(
-            tl.int64
-        )
+        slot = tl.load(
+            slots_ptr + b * L + offs_l, mask=offs_l < L, other=0
+        ).to(tl.int64)
     page = slot // page_size
     off = slot % page_size
     row_base = page * row_stride
 
     # K payload: [BLOCK_L, HALF_D] uint8
     pay = tl.load(
-        table_ptr + row_base[:, None] + off[:, None] * PAYLOAD_BYTES + offs_i[None, :],
+        table_ptr
+        + row_base[:, None]
+        + off[:, None] * PAYLOAD_BYTES
+        + offs_i[None, :],
         mask=valid[:, None],
         other=0,
     )
@@ -181,10 +177,17 @@ def _fp4_index_logits_kernel(
 
     # queries: even / odd elements, [H, HALF_D] bf16
     q_even = tl.load(
-        q_ptr + b * stride_qb + offs_h[:, None] * stride_qh + 2 * offs_i[None, :]
+        q_ptr
+        + b * stride_qb
+        + offs_h[:, None] * stride_qh
+        + 2 * offs_i[None, :]
     )
     q_odd = tl.load(
-        q_ptr + b * stride_qb + offs_h[:, None] * stride_qh + 2 * offs_i[None, :] + 1
+        q_ptr
+        + b * stride_qb
+        + offs_h[:, None] * stride_qh
+        + 2 * offs_i[None, :]
+        + 1
     )
 
     w = tl.load(w_ptr + b * stride_wb + offs_h).to(tl.float32)
@@ -194,7 +197,9 @@ def _fp4_index_logits_kernel(
         tl.store(out_ptr + b * stride_out + offs_l, logit, mask=offs_l < L)
     if WRITE_CANDIDATES:
         blocks_per_tile: tl.constexpr = BLOCK_L // CANDIDATE_BLOCK_SIZE
-        block_scores = tl.reshape(logit, (blocks_per_tile, CANDIDATE_BLOCK_SIZE))
+        block_scores = tl.reshape(
+            logit, (blocks_per_tile, CANDIDATE_BLOCK_SIZE)
+        )
         block_scores = tl.max(block_scores, axis=1)
         block_ids = lb * blocks_per_tile + tl.arange(0, blocks_per_tile)
         last_block = (n_vis - 1) // CANDIDATE_BLOCK_SIZE
@@ -254,7 +259,11 @@ def _fp4_group_load_keys(
     low = _e2m1_decode(pay & 15)
     high = _e2m1_decode(pay >> 4 & 15)
     exps = tl.load(
-        TABLE + row[:, None] + PAGE * 64 + off[:, None] * 4 + (i // 16)[None, :],
+        TABLE
+        + row[:, None]
+        + PAGE * 64
+        + off[:, None] * 4
+        + (i // 16)[None, :],
         valid[:, None],
         other=127,
     )
@@ -322,7 +331,9 @@ def _fp4_group_score(
     if WRITE_CANDIDATES:
         scores = tl.max(tl.reshape(logit, (BL // CB, CB)), 1)
         ids = lb * (BL // CB) + tl.arange(0, BL // CB)
-        scores = tl.where((nvis > 0) & (ids == (nvis - 1) // CB), float("inf"), scores)
+        scores = tl.where(
+            (nvis > 0) & (ids == (nvis - 1) // CB), float("inf"), scores
+        )
         tl.store(CS + b * SCS + ids, scores, ids < tl.cdiv(L, CB))
         tl.store(CL + b, tl.cdiv(nvis, CB), lb == 0)
 
@@ -505,7 +516,11 @@ def _fp4_group_load_keys_persistent_tile(
     low = _e2m1_decode(pay & 15)
     high = _e2m1_decode(pay >> 4 & 15)
     exps = tl.load(
-        TABLE + row[:, None] + PAGE * 64 + off[:, None] * 4 + (i // 16)[None, :],
+        TABLE
+        + row[:, None]
+        + PAGE * 64
+        + off[:, None] * 4
+        + (i // 16)[None, :],
         valid[:, None],
         other=127,
     )
@@ -575,7 +590,9 @@ def _fp4_group_score_persistent_tile(
     if WRITE_CANDIDATES:
         scores = tl.max(tl.reshape(logit, (BL // CB, CB)), 1)
         ids = lb * (BL // CB) + tl.arange(0, BL // CB)
-        scores = tl.where((nvis > 0) & (ids == (nvis - 1) // CB), float("inf"), scores)
+        scores = tl.where(
+            (nvis > 0) & (ids == (nvis - 1) // CB), float("inf"), scores
+        )
         tl.store(CS + b * SCS + ids, scores, ids < tl.cdiv(L, CB))
         tl.store(CL + b, tl.cdiv(nvis, CB), lb == 0)
 
@@ -818,14 +835,18 @@ def _fp4_index_logits_grouped_persistent_kernel(
 
 
 def _use_native_fp8(
-    q, page_size, ratio, width, candidate_block_size, write_logits, query_group_size
+    q,
+    page_size,
+    ratio,
+    width,
+    candidate_block_size,
+    write_logits,
+    query_group_size,
 ):
     # These are the measured capacity/batch buckets, not a density assumption.
     # Runtime Q/K eligibility, requests and lengths are checked on the device.
     if (
-        os.getenv("FLAGGEMS_DSV41_INDEXER_FP8", "1") != "1"
-        or not _skip_invalid_tiles()
-        or query_group_size != 6
+        query_group_size != 6
         or tuple(q.shape[1:]) != (32, 128)
         or page_size != 64
         or triton.__version__.split("+")[0] not in ("3.6.0", "3.7.1")
@@ -852,8 +873,7 @@ def _use_tle_native_fp8(batch, ratio):
     # B6/r2's approximately 1% result was not stable under eight paired runs.
     # This is a measured bucket dispatch, after the semantic/grouping gate.
     return (
-        os.getenv("FLAGGEMS_DSV41_INDEXER_TLE", "1") == "1"
-        and triton.__version__.split("+")[0] == "3.6.0"
+        triton.__version__.split("+")[0] == "3.6.0"
         and batch in (6, 12, 18, 24, 30, 36, 42, 48, 60, 72, 84, 96, 120, 192)
         and ratio in (1, 2)
         and (batch, ratio) not in ((6, 1), (6, 2), (12, 1))
@@ -917,7 +937,9 @@ def fp4_index_logits_req_to_token(
         except ImportError:
             FP4_FP8_SCORE_ABI = 0
         if FP4_FP8_SCORE_ABI == 2:
-            native_fp8 = _tle_native_fp8() if _use_tle_native_fp8(B, ratio) else None
+            native_fp8 = (
+                _tle_native_fp8() if _use_tle_native_fp8(B, ratio) else None
+            )
             if native_fp8 is None:
                 from .dsv41_fp4_fp8_indexer import (
                     fp4_index_logits_req_to_token as native_fp8,
@@ -942,7 +964,9 @@ def fp4_index_logits_req_to_token(
     req = req.to(torch.int64).contiguous()
     lens = lens.to(torch.int64).contiguous()
     output_width = triton.cdiv(width, 4) * 4 if write_logits else 4
-    out_storage = torch.empty((B, output_width), dtype=torch.float32, device=q.device)
+    out_storage = torch.empty(
+        (B, output_width), dtype=torch.float32, device=q.device
+    )
     out = out_storage[:, :width]
     block_l = 64
     if candidate_block_size:
@@ -968,17 +992,18 @@ def fp4_index_logits_req_to_token(
         query_group_size == 6
         and B in (6, 12, 18, 24, 30, 36, 42, 48, 60, 72, 84, 96)
         and H == 32
-        and _skip_invalid_tiles()
     )
     use_persistent = (
-        use_middle and candidate_block_size == 8 and not write_logits and width >= 65536
+        use_middle
+        and candidate_block_size == 8
+        and not write_logits
+        and width >= 65536
     )
     use_grouped = (
         query_group_size == 6
         and (B in (120, 192) or (use_middle and candidate_block_size == 0))
         and H == 32
         and candidate_block_size in (0, 8)
-        and _skip_invalid_tiles()
     )
     if use_persistent:
         block_l = 128
@@ -1036,7 +1061,9 @@ def fp4_index_logits_req_to_token(
     elif use_grouped:
         if use_middle:
             block_l = 128
-        _fp4_index_logits_grouped_kernel[(B // 6, triton.cdiv(width, block_l))](
+        _fp4_index_logits_grouped_kernel[
+            (B // 6, triton.cdiv(width, block_l))
+        ](
             q,
             weights,
             req_to_token,
@@ -1093,7 +1120,6 @@ def fp4_index_logits_req_to_token(
             H=H,
             HALF_D=INDEX_HEAD_DIM // 2,
             BLOCK_L=block_l,
-            SKIP_INVALID=_skip_invalid_tiles(),
             RATIO=ratio,
             USE_REQ_TO_TOKEN=True,
             USE_CANDIDATE_BLOCKS=False,
@@ -1171,7 +1197,6 @@ def fp4_index_logits_candidate_blocks(
         H=heads,
         HALF_D=INDEX_HEAD_DIM // 2,
         BLOCK_L=block_l,
-        SKIP_INVALID=_skip_invalid_tiles(),
         RATIO=ratio,
         USE_REQ_TO_TOKEN=False,
         USE_CANDIDATE_BLOCKS=True,

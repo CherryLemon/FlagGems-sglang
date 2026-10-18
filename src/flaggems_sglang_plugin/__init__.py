@@ -18,7 +18,6 @@ import functools
 import hashlib
 import importlib
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -35,17 +34,26 @@ _SOURCE_PINS = {
 class Installation:
     """Own only bindings replaced by this adapter; restore them by identity."""
 
-    def __init__(self, bindings, replacements):
+    def __init__(self, bindings, replacements, children=()):
         self.bindings = bindings
         self.replacements = replacements
+        self.children = children
 
     def uninstall(self):
         global _handle
         for module, name, old, new in reversed(self.bindings):
             if getattr(module, name, None) is new:
                 setattr(module, name, old)
+        for child in reversed(self.children):
+            child.uninstall()
         if _handle is self:
             _handle = None
+
+
+def _install_w4a8():
+    from .w4a8_moe import install_if_supported
+
+    return install_if_supported()
 
 
 def install():
@@ -66,11 +74,13 @@ def install():
     modules = {}
     for name, expected in _SOURCE_PINS.items():
         module = importlib.import_module(name)
-        if hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest() != expected:
+        if (
+            hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest()
+            != expected
+        ):
             raise RuntimeError("unreviewed SGLang operator source: " + name)
         modules[name] = module
 
-    import flaggems_sglang as gems
     from flag_gems.fused.dsv41 import mhc as model_mhc
     from flag_gems.fused.dsv41.fp4_indexer import (
         FP4_INDEX_SCORE_ABI,
@@ -82,7 +92,13 @@ def install():
     )
     from flag_gems.ops.w8a8_block_fp8_matmul import w8a8_block_fp8_matmul
 
-    if (BLOCK_FP8_SM90_ABI, FP4_INDEX_SCORE_ABI, model_mhc.MHC_EXACT_ABI) != (1, 1, 1):
+    import flaggems_sglang as gems
+
+    if (BLOCK_FP8_SM90_ABI, FP4_INDEX_SCORE_ABI, model_mhc.MHC_EXACT_ABI) != (
+        1,
+        1,
+        1,
+    ):
         raise RuntimeError(
             "incompatible FlagGems SM90 operator ABI; install the pinned dsv41 extra"
         )
@@ -112,13 +128,15 @@ def install():
             and output_dtype in (torch.bfloat16, torch.float32)
             and A.is_contiguous()
             and B.is_contiguous()
-            and (A.shape[0], B.shape[0], A.shape[1]) in _H100_MIDRANGE_FP8_CONFIGS
+            and (A.shape[0], B.shape[0], A.shape[1])
+            in _H100_MIDRANGE_FP8_CONFIGS
         )
         if supported:
             return w8a8_block_fp8_matmul(A, B, As, Bs, [32, 32], output_dtype)
         return original(A, B, As, Bs, block_size, output_dtype)
 
     replacements[original] = block_fp8
+    moe = _install_w4a8()
     bindings = []
     # Rebind already imported aliases as well as the defining modules. Match
     # function objects, never broad attribute names or unrelated libraries.
@@ -135,7 +153,7 @@ def install():
             if replacement is not None:
                 setattr(module, attr, replacement)
                 bindings.append((module, attr, value, replacement))
-    _handle = Installation(bindings, replacements)
+    _handle = Installation(bindings, replacements, (moe,) if moe else ())
     logger.info(
         "FlagGems DSV4.1 SM90 operator adapter installed: device=%d, bindings=%d",
         torch.cuda.current_device(),
@@ -145,10 +163,8 @@ def install():
 
 
 def load_plugin():
-    """SGLang entry point; default-off and defer GPU imports to scheduler setup."""
+    """SGLang entry point; defer GPU imports to scheduler setup."""
     global _configure_original
-    if os.getenv("FLAGGEMS_SGLANG_DSV41", "0") != "1":
-        return
     scheduler = sys.modules.get("sglang.srt.managers.scheduler")
     if scheduler is None or _configure_original is not None:
         return
@@ -159,11 +175,14 @@ def load_plugin():
         result = _configure_original(*args, **kwargs)
         import torch
 
+        if not torch.cuda.is_available():
+            return result
         gpu_id = kwargs.get("gpu_id", args[1] if len(args) > 1 else None)
         if gpu_id is None:
             raise RuntimeError("scheduler GPU identity missing")
         torch.cuda.set_device(gpu_id)
-        install()
+        if torch.cuda.get_device_capability() == (9, 0):
+            install()
         return result
 
     scheduler.configure_scheduler_process = configure

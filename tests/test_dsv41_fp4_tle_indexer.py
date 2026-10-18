@@ -85,7 +85,9 @@ def test_native_only_edges_and_instruction_evidence(monkeypatch, ratio, width):
 
 
 @pytest.mark.parametrize("ratio", [1, 2])
-def test_graph_replay_refreshes_eligibility_requests_lengths(monkeypatch, ratio):
+def test_graph_replay_refreshes_eligibility_requests_lengths(
+    monkeypatch, ratio
+):
     xs = _args(257, ratio)
     capture = _Capture(native._native)
     monkeypatch.setattr(native, "_native", capture)
@@ -129,17 +131,21 @@ def test_unaligned_tables_keep_byte_addressed_bf16(monkeypatch, odd_stride):
     table = xs[5]
     if odd_stride:
         storage = torch.empty(
-            (table.shape[0], table.shape[1] + 1), dtype=torch.uint8, device="cuda"
+            (table.shape[0], table.shape[1] + 1),
+            dtype=torch.uint8,
+            device="cuda",
         )
         xs[5] = storage[:, :-1]
     else:
-        storage = torch.empty(table.numel() + 1, dtype=torch.uint8, device="cuda")
+        storage = torch.empty(
+            table.numel() + 1, dtype=torch.uint8, device="cuda"
+        )
         xs[5] = storage[1:].reshape_as(table)
     xs[5].copy_(table)
     xs[-1] = 655627
-    monkeypatch.setenv("FLAGGEMS_DSV41_INDEXER_FP8", "0")
-    expected = _call(control, xs)
-    monkeypatch.setenv("FLAGGEMS_DSV41_INDEXER_FP8", "1")
+    with monkeypatch.context() as baseline:
+        baseline.setattr(control, "_use_native_fp8", lambda *args: False)
+        expected = _call(control, xs)
 
     def unexpected(*args, **kwargs):
         raise AssertionError("unaligned storage entered uint16 native loader")
@@ -171,7 +177,9 @@ def test_dense_graph_replay_defines_allocated_row_padding():
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph):
         out = _call(native, xs)
-    full = torch.as_strided(out, (out.shape[0], out.stride(0)), (out.stride(0), 1))
+    full = torch.as_strided(
+        out, (out.shape[0], out.stride(0)), (out.stride(0), 1)
+    )
     for length in [129, 0, 1, 129]:
         full.fill_(float("nan"))
         xs[4].fill_(length)
@@ -188,9 +196,9 @@ def test_previous_optional_math_abi_preserves_bf16(monkeypatch):
 
     xs = _args(257, 1)
     xs[-1] = 655627
-    monkeypatch.setenv("FLAGGEMS_DSV41_INDEXER_FP8", "0")
-    expected = _call(control, xs)
-    monkeypatch.setenv("FLAGGEMS_DSV41_INDEXER_FP8", "1")
+    with monkeypatch.context() as baseline:
+        baseline.setattr(control, "_use_native_fp8", lambda *args: False)
+        expected = _call(control, xs)
     monkeypatch.setattr(math, "FP4_FP8_SCORE_ABI", 1)
 
     def unexpected(*args, **kwargs):
@@ -203,14 +211,14 @@ def test_previous_optional_math_abi_preserves_bf16(monkeypatch):
 def test_unhinted_multiple_of_six_does_not_enter_native_tle(monkeypatch):
     xs = _args(257, 1)
     xs[-1] = 655627
-    monkeypatch.setenv("FLAGGEMS_DSV41_INDEXER_FP8", "0")
     expected = control.fp4_index_logits_req_to_token(
         *xs, candidate_block_size=8, write_logits=False
     )
-    monkeypatch.setenv("FLAGGEMS_DSV41_INDEXER_FP8", "1")
 
     def unexpected():
-        raise AssertionError("a batch multiple of six is not a semantic group hint")
+        raise AssertionError(
+            "a batch multiple of six is not a semantic group hint"
+        )
 
     monkeypatch.setattr(control, "_tle_native_fp8", unexpected)
     assert_exact(
@@ -221,19 +229,17 @@ def test_unhinted_multiple_of_six_does_not_enter_native_tle(monkeypatch):
     )
 
 
-@pytest.mark.parametrize("mode", ["opt_out", "missing_helper"])
-def test_optional_tle_retains_native_gluon(monkeypatch, mode):
+def test_missing_tle_helper_retains_native_gluon(monkeypatch):
     from flaggems_sglang.runtime.backend._nvidia.hopper.ops import (
         dsv41_fp4_fp8_indexer as gluon,
     )
 
     xs = _args(257, 2)
     xs[-1] = 327813
-    monkeypatch.setenv("FLAGGEMS_DSV41_INDEXER_TLE", "0")
-    expected = _call(control, xs)
-    if mode == "missing_helper":
-        monkeypatch.setenv("FLAGGEMS_DSV41_INDEXER_TLE", "1")
-        monkeypatch.setattr(control, "_tle_native_fp8", lambda: None)
+    with monkeypatch.context() as baseline:
+        baseline.setattr(control, "_use_tle_native_fp8", lambda *args: False)
+        expected = _call(control, xs)
+    monkeypatch.setattr(control, "_tle_native_fp8", lambda: None)
     capture = _Capture(gluon._native)
     monkeypatch.setattr(gluon, "_native", capture)
     assert_exact(_call(control, xs), expected)

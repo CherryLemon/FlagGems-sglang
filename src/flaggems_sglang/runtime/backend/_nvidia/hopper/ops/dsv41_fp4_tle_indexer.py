@@ -494,7 +494,7 @@ class _NativeKernel:
         return launch
 
 
-# Frozen serial schedule. No environment switch enables the experimental WS.
+# Frozen serial schedule; experimental WS is not selected by dispatch.
 _native = _native_r16 = _NativeKernel()
 
 
