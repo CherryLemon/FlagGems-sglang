@@ -1,0 +1,82 @@
+# Copyright 2026 FlagOS Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Benchmark for moe/post_reorder_cutlass."""
+
+import pytest
+import torch
+
+import flaggems_sglang
+from flaggems_sglang.reference import get_reference
+
+from .op_benchmark import OpBenchmark
+
+# Shapes match kernel-comp-baseline/problems/moe/post_reorder_cutlass.
+SHAPES = [(t, 8, 7168, 32) for t in (1, 8, 64, 512)]
+MORE_SHAPES = [(t, 8, 7168, 32) for t in (2048,)]
+
+
+def _input_fn(shape, cur_dtype, device):
+    num_tokens, topk, hidden, num_local_experts = shape
+    g = torch.Generator(device=device).manual_seed(9)
+    n = num_tokens * topk
+    down = torch.randn(n, hidden, device=device, generator=g).to(cur_dtype)
+    ids = torch.randint(
+        0,
+        num_local_experts + 1,
+        (num_tokens, topk),
+        dtype=torch.int32,
+        device=device,
+        generator=g,
+    )
+    # torch_gcu randperm hangs on-device; generate on CPU then move.
+    dst = (
+        torch.randperm(
+            n, generator=torch.Generator(device="cpu").manual_seed(9)
+        )
+        .reshape(num_tokens, topk)
+        .to(device)
+        .to(torch.int32)
+    )
+    output = torch.zeros(num_tokens, hidden, dtype=cur_dtype, device=device)
+    weights = torch.rand(
+        num_tokens, topk, dtype=torch.float32, device=device, generator=g
+    )
+    yield (
+        down,
+        output,
+        dst,
+        ids,
+        weights,
+        num_local_experts,
+        topk,
+        num_tokens,
+        hidden,
+        1.0,
+    )
+
+
+@pytest.mark.post_reorder_cutlass
+def test_perf_post_reorder_cutlass():
+    bench = OpBenchmark(
+        op_name="post_reorder_cutlass",
+        torch_op=get_reference("post_reorder_cutlass"),
+        input_fn=_input_fn,
+        dtypes=[torch.bfloat16],
+        shapes=SHAPES,
+        more_shapes=MORE_SHAPES,
+        shape_desc="num_tokens, topk, hidden, num_local_experts",
+    )
+    bench.set_gems(flaggems_sglang.post_reorder_cutlass)
+    bench.run()

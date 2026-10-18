@@ -13,6 +13,20 @@
 # limitations under the License.
 
 ops:
+  - id: add3
+    description: |
+      Three-way elementwise addition that preserves the double rounding: bf16(bf16(a + b) + c).
+      Accumulating in fp32 and rounding once is not allowed; the result stays bit-identical to the unfused form.
+    for:
+      - add3
+    labels:
+      - fused
+      - pointwise
+      - sglang
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
   - id: apply_token_bitmask
     description: |
       Applies a packed bitmask to logits for grammar-constrained decoding.
@@ -37,6 +51,20 @@ ops:
       - fused
       - sglang
       - Mamba
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: build_trtllm_mha_page_table
+    description: |
+      Builds the TRT-LLM MHA page table on device with no host sync.
+      Reads the KV token slot at each page boundary and stores slot // page_size as the block id.
+    for:
+      - build_trtllm_mha_page_table
+    labels:
+      - fused
+      - sglang
+      - Attention
     kind:
       - NeuralNetwork
     stages:
@@ -122,12 +150,111 @@ ops:
       - NeuralNetwork
     stages:
       - stable: '1.0'
+  - id: clamp_position
+    description: |
+      Decode-step position computation: positions = clamp(seq_lens - 1, min=0).
+      Arithmetically trivial but launched once per forward on the critical path, so it is latency bound.
+    for:
+      - clamp_position
+    labels:
+      - fused
+      - pointwise
+      - sglang
+      - Attention
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: compute_position
+    description: |
+      Fused position and start-offset computation for extend (chunked-prefill) batches.
+      Runs the exclusive prefix sum of the extend lengths in-kernel and fills prefix_len + arange(extend_len).
+    for:
+      - compute_position
+    labels:
+      - fused
+      - sglang
+      - Attention
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: compute_src2dst
+    description: |
+      Inverts the Mixture-of-Experts routing permutation.
+      Scatters the destination slot of every source (token, slot) pair from the sorted reorder ids.
+    for:
+      - compute_src2dst
+    labels:
+      - fused
+      - sglang
+      - MoE
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: concat_and_cast_mha_k
+    description: |
+      Builds the MHA key tensor from the per-head NoPE part and the broadcast single-head RoPE part.
+      Casts implicitly on store, so a lower-precision KV cache target needs no extra pass.
+    for:
+      - concat_and_cast_mha_k
+    labels:
+      - fused
+      - sglang
+      - Attention
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: concat_mla_k
+    description: |
+      Builds the MLA key tensor from its NoPE and RoPE halves.
+      Copies the per-head NoPE part and broadcasts the single-head RoPE part across all heads.
+    for:
+      - concat_mla_k
+    labels:
+      - fused
+      - sglang
+      - Attention
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
   - id: context_attention
     description: |
       Prefill/context-stage scaled dot-product attention on packed variable-length sequences.
       Supports causal masking over sequences delimited by per-batch start offsets and lengths.
     for:
       - context_attention
+    labels:
+      - fused
+      - sglang
+      - Attention
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: create_flashinfer_kv_indices
+    description: |
+      Flattens the per-request token slots of the req_to_token pool into a ragged kv_indices buffer.
+      Produces the layout FlashInfer paged attention consumes, using per-request prefix offsets.
+    for:
+      - create_flashinfer_kv_indices
+    labels:
+      - fused
+      - sglang
+      - Attention
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: create_flashmla_kv_indices
+    description: |
+      Builds the FlashMLA block table with one entry per page instead of one per token.
+      Reads the token slot at each page boundary and divides it by the page size.
+    for:
+      - create_flashmla_kv_indices
     labels:
       - fused
       - sglang
@@ -164,6 +291,34 @@ ops:
       - NeuralNetwork
     stages:
       - stable: '1.0'
+  - id: deepep_permute
+    description: |
+      DeepEP MoE gather prologue that permutes token rows into the grouped-GEMM input.
+      Replicates each token's hidden row once per routed slot and skips dropped slots.
+    for:
+      - deepep_permute
+    labels:
+      - fused
+      - sglang
+      - MoE
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: deepep_post_reorder
+    description: |
+      DeepEP MoE epilogue that gathers each token's top-k expert outputs out of the permuted layout.
+      Combines them with the routing weights and the routed scaling factor.
+    for:
+      - deepep_post_reorder
+    labels:
+      - fused
+      - sglang
+      - MoE
+    kind:
+      - Reduction
+    stages:
+      - stable: '1.0'
   - id: draft_topk1
     description: |
       Top-1 draft token selection for speculative decoding.
@@ -178,6 +333,19 @@ ops:
       - NeuralNetwork
     stages:
       - stable: '1.0'
+  - id: dsv3_fused_a_gemm
+    description: |
+      DeepSeek-V3 fused QKV-A down-projection GEMM at decode shapes (num_tokens <= 16).
+      Hand-tuned skinny-M matmul for the heaviest weight read in attention preprocessing.
+    for:
+      - dsv3_fused_a_gemm
+    labels:
+      - fused
+      - sglang
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
   - id: embedding_lora_a
     description: |
       LoRA A-projection over an embedding lookup for segmented multi-adapter batches.
@@ -188,6 +356,78 @@ ops:
       - fused
       - sglang
       - LoRA
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: fill_padded_rows
+    description: |
+      Fills every padding row of a routed MoE activation with a constant value.
+      Reads the non-padded row count from device memory so the static grid stays CUDA-graph capturable.
+    for:
+      - fill_padded_rows
+    labels:
+      - fused
+      - sglang
+      - MoE
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: fixup_zero_kv
+    description: |
+      Post-processing for TRT-LLM ragged attention requests whose KV length is zero.
+      Zeroes their output rows and sets the log-sum-exp to -inf in one launch, with no host sync.
+    for:
+      - fixup_zero_kv
+    labels:
+      - fused
+      - sglang
+      - Attention
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: fused_eh_norm
+    description: |
+      EAGLE draft-model preprocessing: RMSNorm of the input embeddings and the previous hidden state.
+      Uses separate weights per half and concatenates them, replacing two norms plus a cat.
+    for:
+      - fused_eh_norm
+    labels:
+      - fused
+      - sglang
+      - Normalization
+      - Speculative
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: fused_gate_sigmoid_mul_add
+    description: |
+      Gating fusion for Mixture-of-Experts shared experts.
+      Reduces the hidden/gate row dot product, then adds sigmoid(gate) * shared_output onto the accumulator.
+    for:
+      - fused_gate_sigmoid_mul_add
+    labels:
+      - fused
+      - sglang
+      - Activation
+      - MoE
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: fused_moe_dispatch_index
+    description: |
+      Builds the permuted grouped-GEMM destination indices for masked/DeepGEMM MoE in a single launch.
+      Buckets each (token, slot) pair by expert with an atomic cursor and turns the offsets into flat rows.
+    for:
+      - fused_moe_dispatch_index
+    labels:
+      - fused
+      - sglang
+      - MoE
     kind:
       - NeuralNetwork
     stages:
@@ -248,6 +488,20 @@ ops:
       - NeuralNetwork
     stages:
       - stable: '1.0'
+  - id: gate_topk
+    description: |
+      Streaming top-k for small k (k <= 32), a drop-in replacement for torch.topk along the last dim.
+      Packs (value, index) into one sortable key so the whole top-k state stays in registers.
+    for:
+      - gate_topk
+    labels:
+      - fused
+      - sglang
+      - MoE
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
   - id: gate_up_lora_b
     description: |
       LoRA B-projection for fused gate/up projections in segmented multi-adapter batches.
@@ -273,6 +527,63 @@ ops:
       - pointwise
       - sglang
       - Activation
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: gelu_tanh_and_mul
+    description: |
+      Gated GELU with the tanh approximation: gelu_tanh(x[..., :d]) * x[..., d:].
+      The gelu_pytorch_tanh variant, distinct from the exact erf-based gelu_and_mul.
+    for:
+      - gelu_tanh_and_mul
+    labels:
+      - fused
+      - pointwise
+      - sglang
+      - Activation
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: group_norm_silu
+    description: |
+      Fused GroupNorm plus SiLU for diffusion U-Net and VAE blocks.
+      Computes the group statistics and the affine transform in fp32 before activating.
+    for:
+      - group_norm_silu
+    labels:
+      - fused
+      - sglang
+      - Normalization
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: hash_topk
+    description: |
+      Hash-routed Mixture-of-Experts gate whose expert set is looked up by token id, so there is no top-k search.
+      Gathers the routed logits, scores with sqrt(softplus(.)), renormalizes rows and appends fused shared experts.
+    for:
+      - hash_topk
+    labels:
+      - fused
+      - sglang
+      - MoE
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: indexed_scale_shift
+    description: |
+      Per-row AdaLN modulation with the scale and shift tables gathered through an index vector.
+      Two explicit bf16 roundings reproduce the eager kernel boundaries as part of the contract.
+    for:
+      - indexed_scale_shift
+    labels:
+      - fused
+      - pointwise
+      - sglang
     kind:
       - NeuralNetwork
     stages:
@@ -320,6 +631,34 @@ ops:
       - NeuralNetwork
     stages:
       - stable: '1.0'
+  - id: moe_align_block_size
+    description: |
+      The MoE sort and pad that every block-tiled fused-MoE GEMM depends on.
+      Groups the flattened (token, slot) pairs by expert and pads each expert run to a multiple of block_size.
+    for:
+      - moe_align_block_size
+    labels:
+      - fused
+      - sglang
+      - MoE
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: moe_align_single_token
+    description: |
+      Single-token decode specialization of moe_align_block_size.
+      One token with distinct experts, so each expert owns one block and a single warp does all the work.
+    for:
+      - moe_align_single_token
+    labels:
+      - fused
+      - sglang
+      - MoE
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
   - id: moe_fused_gate
     description: |
       Fused Mixture-of-Experts gating with expert-group selection.
@@ -363,6 +702,20 @@ ops:
       - Reduction
     stages:
       - stable: '1.0'
+  - id: moe_topk_sum
+    description: |
+      Reduces each token's per-expert Mixture-of-Experts outputs over the top-k dimension.
+      Pure bandwidth: top-k reads and one write per output element, accumulated in fp32.
+    for:
+      - moe_topk_sum
+    labels:
+      - fused
+      - sglang
+      - MoE
+    kind:
+      - Reduction
+    stages:
+      - stable: '1.0'
   - id: mrope_fused
     description: |
       Multi-dimensional Rotary Positional Embedding (mRoPE) for query and key tensors.
@@ -373,6 +726,20 @@ ops:
       - fused
       - sglang
       - RoPE
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: pack_topk_ids
+    description: |
+      Packs each (expert id, routing weight) pair into a single int32.
+      The low 16 bits carry the weight's bf16 bit pattern, the layout the FlashInfer TRT-LLM MoE path consumes.
+    for:
+      - pack_topk_ids
+    labels:
+      - fused
+      - sglang
+      - MoE
     kind:
       - NeuralNetwork
     stages:
@@ -419,6 +786,20 @@ ops:
       - NeuralNetwork
     stages:
       - stable: '1.0'
+  - id: post_reorder_cutlass
+    description: |
+      CUTLASS-MoE epilogue that combines each token's routed expert outputs in fp32.
+      Skips slots routed off the local expert-parallel rank and folds the routed scaling factor into the store.
+    for:
+      - post_reorder_cutlass
+    labels:
+      - fused
+      - sglang
+      - MoE
+    kind:
+      - Reduction
+    stages:
+      - stable: '1.0'
   - id: qkv_lora_b
     description: |
       LoRA B-projection for fused QKV projections in segmented multi-adapter batches.
@@ -429,6 +810,35 @@ ops:
       - fused
       - sglang
       - LoRA
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: relu2
+    description: |
+      Squared ReLU, elementwise: max(0, x) ** 2, computed in fp32 and cast back.
+      Ungated, so unlike the *_and_mul activations the output keeps the input shape.
+    for:
+      - relu2
+    labels:
+      - fused
+      - pointwise
+      - sglang
+      - Activation
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: residual_gate_add
+    description: |
+      Elementwise residual/gate update of an LTX-2 transformer block: residual + T(update * gate).
+      Rounds the intermediate product to the tensor dtype so the double rounding matches the unfused sequence.
+    for:
+      - residual_gate_add
+    labels:
+      - fused
+      - pointwise
+      - sglang
     kind:
       - NeuralNetwork
     stages:
@@ -461,6 +871,20 @@ ops:
       - NeuralNetwork
     stages:
       - stable: '1.0'
+  - id: seqlens_expand
+    description: |
+      Expands the per-request (qo_len, kv_len) pairs of an extend batch into per-query-token KV lengths.
+      Clamps at zero so DP-padded idle rows cannot turn into huge unsigned lengths downstream.
+    for:
+      - seqlens_expand
+    labels:
+      - fused
+      - sglang
+      - Attention
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
   - id: sgemm_lora_a
     description: |
       LoRA A-projection GEMM for segmented multi-adapter batches.
@@ -485,6 +909,34 @@ ops:
       - fused
       - sglang
       - LoRA
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: sigmoid_gate_mul
+    description: |
+      Elementwise sigmoid gating multiply over same-shaped operands: x * sigmoid(gate).
+      A flat 1-D sweep over numel, computed in fp32 and stored back in the input dtype.
+    for:
+      - sigmoid_gate_mul
+    labels:
+      - fused
+      - pointwise
+      - sglang
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: sigmoid_gate_mul_broadcast
+    description: |
+      Row-broadcast sigmoid gating multiply: out[n, :] = x[n, :] * sigmoid(gate[n]).
+      One program per row, with the block size rounded up to the next power of two of the hidden dim.
+    for:
+      - sigmoid_gate_mul_broadcast
+    labels:
+      - fused
+      - pointwise
+      - sglang
     kind:
       - NeuralNetwork
     stages:
@@ -585,3 +1037,31 @@ ops:
     kind: [NeuralNetwork]
     stages:
       - experimental: '0.1'
+  - id: tiny_k_gemm
+    description: |
+      Small-K, large-N GEMM: out = x @ w.T with m <= 16 and k in {128, 256}.
+      One warp reduces K for a single output column and each block covers split_n columns, leaving no tail block.
+    for:
+      - tiny_k_gemm
+    labels:
+      - fused
+      - sglang
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'
+  - id: unpad_draft_extend_output
+    description: |
+      Inverse of pad_draft_extend_query in speculative decoding.
+      Gathers the accepted rows of the padded attention output into a ragged [total_tokens, H, D] tensor.
+    for:
+      - unpad_draft_extend_output
+    labels:
+      - fused
+      - sglang
+      - Attention
+      - Speculative
+    kind:
+      - NeuralNetwork
+    stages:
+      - stable: '1.0'

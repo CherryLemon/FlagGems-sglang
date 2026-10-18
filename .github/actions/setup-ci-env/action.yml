@@ -29,6 +29,35 @@ inputs:
       base-image interpreter owns the vendor torch/Triton build.
     required: false
     default: "1"
+  base-python:
+    description: >-
+      Interpreter to build the environment on top of. Normally leave this
+      empty, including on a runner whose vendor torch and Triton build live in
+      a venv rather than in the base image: when nothing on PATH has torch,
+      the script searches torch-search-roots for the interpreter that owns a
+      torch install and builds on that. Its packages then become visible (see
+      the system-site-packages note below) while the installs still land in
+      this action's own environment, leaving the runner's venv untouched.
+
+      Set it only to override that choice — to pin one specific interpreter on
+      a machine with several, or to name a runtime outside the search roots. A
+      space-separated list is accepted, and then the first candidate that has
+      torch wins. Prefer widening torch-search-roots over hardcoding a path:
+      the vendor runtime on a self-hosted runner is reprovisioned without
+      reference to this repo, so a path here goes stale on its own schedule.
+    required: false
+    default: ""
+  torch-search-roots:
+    description: >-
+      Space-separated directories to search for the interpreter owning the
+      vendor torch, used when none on PATH has it. Leave empty for the
+      script's default ($HOME /opt /usr/local), which covers the usual places
+      a vendor image or a FlagGems checkout puts its venv. The search stays on
+      one filesystem and is time-boxed per root, so a miss costs a bounded
+      wait and a warning rather than a hung job. Only runs when require-torch
+      is 1, where a missing torch is fatal anyway.
+    required: false
+    default: ""
   virtual-env:
     description: >-
       Path of the virtualenv to create and install into. Leave empty for the
@@ -69,6 +98,14 @@ inputs:
       0 on runners without a supported accelerator.
     required: false
     default: "1"
+  require-torch:
+    description: >-
+      Require `import torch` to succeed during verification (1), or only
+      report whether it is importable (0). Turn this on wherever the runner is
+      supposed to provide torch: it turns a missing vendor runtime into one
+      clear setup failure instead of an error in every test that follows.
+    required: false
+    default: "0"
   collect-tests:
     description: "Run `pytest --collect-only` as a smoke check (1) or skip (0)"
     required: false
@@ -145,6 +182,7 @@ runs:
       shell: bash
       env:
         UV_VERSION: ${{ inputs.uv-version }}
+        PYTHON_BIN: ${{ inputs.base-python }}
         VENV_PATH: ${{ inputs.virtual-env }}
         VENV_SYSTEM_SITE_PACKAGES: ${{ inputs.system-site-packages }}
         VENV_REUSE: ${{ inputs.reuse-env }}
@@ -153,6 +191,8 @@ runs:
         INSTALL_SGLANG: ${{ inputs.install-sglang }}
         INSTALL_TRITON_KERNELS: ${{ inputs.install-triton-kernels }}
         REQUIRE_PROJECT: ${{ inputs.require-project }}
+        REQUIRE_TORCH: ${{ inputs.require-torch }}
+        TORCH_SEARCH_ROOTS: ${{ inputs.torch-search-roots }}
         COLLECT_TESTS: ${{ inputs.collect-tests }}
         # Pruning only pays off when the cache is uploaded afterwards. Where it
         # just stays on the runner's disk, uv manages it fine on its own.
