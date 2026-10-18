@@ -33,6 +33,7 @@ _SOURCE_PINS = {
     "sglang.kernels.ops.quantization.fp8_kernel": (
         "5422b04361bc1d7cde2aba2e1077e150d477dedab255e1c9628a49ddcb9e9d24",
         "bf4d819c35f35e58be94085c081425284de4d1efd640ff4b000219e1bfef1169",
+        "17a23c306dcf17c4b4ec5f6b7a5f521d90c3c3281c21174a26e7edd048920a01",
     ),
     "sglang.kernels.ops.layernorm.mhc": (
         "a2377a7880c98b8559718021841af9e2e3497cb19a93e613e9efa13fdaae00b6",
