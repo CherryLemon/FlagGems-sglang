@@ -57,9 +57,14 @@ import triton.language as tl
 
 @triton.jit
 def _ccpk_rows(
-    req_to_token_ptr, req_pool_indices_ptr, chunk_start_idx_ptr,
-    chunk_seq_lens_ptr, chunk_cu_seq_lens_ptr, chunk_kv_indices_ptr,
-    req_to_token_stride: tl.constexpr, r2t_stride1: tl.constexpr,
+    req_to_token_ptr,
+    req_pool_indices_ptr,
+    chunk_start_idx_ptr,
+    chunk_seq_lens_ptr,
+    chunk_cu_seq_lens_ptr,
+    chunk_kv_indices_ptr,
+    req_to_token_stride: tl.constexpr,
+    r2t_stride1: tl.constexpr,
     BLOCK: tl.constexpr,
 ):
     pid = tl.program_id(0)
@@ -68,8 +73,11 @@ def _ccpk_rows(
     chunk_start = tl.load(chunk_start_idx_ptr + pid).to(tl.int32)
     chunk_len = tl.load(chunk_seq_lens_ptr + pid).to(tl.int32)
 
-    src_row = (req_to_token_ptr + req_pool_index * req_to_token_stride
-               + chunk_start * r2t_stride1)
+    src_row = (
+        req_to_token_ptr
+        + req_pool_index * req_to_token_stride
+        + chunk_start * r2t_stride1
+    )
     dst_row = chunk_kv_indices_ptr + out_base
     cols = tl.arange(0, BLOCK)
     # Predicate-free hot loop: a tile that is wholly inside the window does not need
@@ -109,14 +117,26 @@ def create_chunked_prefix_cache_kv_indices(*args, **kwargs):
     """
     named = {}
     pos = []
-    for name in ("req_to_token", "req_pool_indices", "chunk_start_idx",
-                 "chunk_seq_lens", "chunk_cu_seq_lens", "chunk_kv_indices"):
+    for name in (
+        "req_to_token",
+        "req_pool_indices",
+        "chunk_start_idx",
+        "chunk_seq_lens",
+        "chunk_cu_seq_lens",
+        "chunk_kv_indices",
+    ):
         v = kwargs.get(name)
         if isinstance(v, torch.Tensor):
             named[name] = v
     pos = [t for t in args if isinstance(t, torch.Tensor)]
-    order = ("req_to_token", "req_pool_indices", "chunk_start_idx",
-             "chunk_seq_lens", "chunk_cu_seq_lens", "chunk_kv_indices")
+    order = (
+        "req_to_token",
+        "req_pool_indices",
+        "chunk_start_idx",
+        "chunk_seq_lens",
+        "chunk_cu_seq_lens",
+        "chunk_kv_indices",
+    )
     tensors = [named.get(n) for n in order]
     if len(pos) == 6 and any(t is None for t in tensors):
         tensors = pos
@@ -125,8 +145,14 @@ def create_chunked_prefix_cache_kv_indices(*args, **kwargs):
             f"create_chunked_prefix_cache_kv_indices: could not bind all 6 "
             f"tensors (named={sorted(named.keys())}, n_positional={len(pos)})"
         )
-    (req_to_token, req_pool_indices, chunk_start_idx, chunk_seq_lens,
-     chunk_cu_seq_lens, chunk_kv_indices) = tensors
+    (
+        req_to_token,
+        req_pool_indices,
+        chunk_start_idx,
+        chunk_seq_lens,
+        chunk_cu_seq_lens,
+        chunk_kv_indices,
+    ) = tensors
 
     bs = req_pool_indices.shape[0]
     if bs == 0:
@@ -151,8 +177,11 @@ def create_chunked_prefix_cache_kv_indices(*args, **kwargs):
     start_c = _keep(chunk_start_idx)
     lens_c = _keep(chunk_seq_lens)
     cu_c = _keep(chunk_cu_seq_lens)
-    out_c = chunk_kv_indices if chunk_kv_indices.is_contiguous() \
+    out_c = (
+        chunk_kv_indices
+        if chunk_kv_indices.is_contiguous()
         else chunk_kv_indices.contiguous()
+    )
 
     vendor = _detect_vendor(req_to_token.device)
     errors = []
@@ -176,16 +205,24 @@ def create_chunked_prefix_cache_kv_indices(*args, **kwargs):
     for blk, nw in orders:
         try:
             _ccpk_rows[(bs,)](
-                r2t, pool_c, start_c, lens_c, cu_c, out_c,
-                BLOCK=blk, num_warps=nw,
-                req_to_token_stride=s0, r2t_stride1=s1,
+                r2t,
+                pool_c,
+                start_c,
+                lens_c,
+                cu_c,
+                out_c,
+                BLOCK=blk,
+                num_warps=nw,
+                req_to_token_stride=s0,
+                r2t_stride1=s1,
             )
             return out_c
         except Exception as e:  # noqa: BLE001
             errors.append(f"b{blk}_w{nw}: {type(e).__name__}: {e}")
     raise RuntimeError(
         f"create_chunked_prefix_cache_kv_indices all variants failed "
-        f"(device={req_to_token.device.type}, bs={bs}) | " + " || ".join(errors)
+        f"(device={req_to_token.device.type}, bs={bs}) | "
+        + " || ".join(errors)
     )
 
 
