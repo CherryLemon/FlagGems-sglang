@@ -16,7 +16,8 @@
 
 Version: qoder r5 (2026-10-05) -- ascend: SINGLE kernel (one launch, no pmax/psum scratch) when the row fits 8192 lanes
 the column tiles' (max, sumexp) partials is folded into the normalise program, which
-removes one launch and one global write/read round trip.  H2 probe: BLOCK_V=4096 with num_warps=4 (half as many column tiles per row) -- this chip is the experiment.
+removes one launch and one global write/read round trip.  H2 probe: BLOCK_V=4096 with num_warps=4 (half as many column
+    tiles per row) -- this chip is the experiment.
 """
 import torch
 import triton
@@ -27,10 +28,18 @@ NEG_INF = tl.constexpr(float("-inf"))
 
 
 @triton.jit
-def _wsr_partial(logits_ptr, temp_ptr, pmax_ptr, psum_ptr,
-                 L_S0: tl.constexpr, L_S1: tl.constexpr,
-                 V: tl.constexpr, C: tl.constexpr,
-                 HAS_TEMP: tl.constexpr, BLOCK_V: tl.constexpr):
+def _wsr_partial(
+    logits_ptr,
+    temp_ptr,
+    pmax_ptr,
+    psum_ptr,
+    L_S0: tl.constexpr,
+    L_S1: tl.constexpr,
+    V: tl.constexpr,
+    C: tl.constexpr,
+    HAS_TEMP: tl.constexpr,
+    BLOCK_V: tl.constexpr,
+):
     pid = tl.program_id(0)
     b = pid // C
     cb = pid - b * C
@@ -50,11 +59,22 @@ def _wsr_partial(logits_ptr, temp_ptr, pmax_ptr, psum_ptr,
 
 
 @triton.jit
-def _wsr_norm(logits_ptr, temp_ptr, pmax_ptr, psum_ptr, out_ptr,
-              L_S0: tl.constexpr, L_S1: tl.constexpr,
-              O_S0: tl.constexpr, O_S1: tl.constexpr,
-              V: tl.constexpr, C: tl.constexpr, BLOCK_C: tl.constexpr,
-              HAS_TEMP: tl.constexpr, BLOCK_V: tl.constexpr):
+def _wsr_norm(
+    logits_ptr,
+    temp_ptr,
+    pmax_ptr,
+    psum_ptr,
+    out_ptr,
+    L_S0: tl.constexpr,
+    L_S1: tl.constexpr,
+    O_S0: tl.constexpr,
+    O_S1: tl.constexpr,
+    V: tl.constexpr,
+    C: tl.constexpr,
+    BLOCK_C: tl.constexpr,
+    HAS_TEMP: tl.constexpr,
+    BLOCK_V: tl.constexpr,
+):
     pid = tl.program_id(0)
     b = pid // C
     cb = pid - b * C
@@ -62,7 +82,7 @@ def _wsr_norm(logits_ptr, temp_ptr, pmax_ptr, psum_ptr, out_ptr,
     # ---- merge this row's C partials here (was a separate finalise launch) ----
     offs = tl.arange(0, BLOCK_C)
     m = offs < C
-    osafe = tl.where(m, offs, 0)                    # lane 0 always in-bounds
+    osafe = tl.where(m, offs, 0)  # lane 0 always in-bounds
     pm = tl.load(pmax_ptr + b * C + osafe)
     pm = tl.where(m, pm, NEG_INF)
     gmax = tl.max(pm)
@@ -82,10 +102,18 @@ def _wsr_norm(logits_ptr, temp_ptr, pmax_ptr, psum_ptr, out_ptr,
 
 
 @triton.jit
-def _wsr_one(logits_ptr, temp_ptr, out_ptr,
-             L_S0: tl.constexpr, L_S1: tl.constexpr,
-             O_S0: tl.constexpr, O_S1: tl.constexpr,
-             V: tl.constexpr, HAS_TEMP: tl.constexpr, BLOCK_V: tl.constexpr):
+def _wsr_one(
+    logits_ptr,
+    temp_ptr,
+    out_ptr,
+    L_S0: tl.constexpr,
+    L_S1: tl.constexpr,
+    O_S0: tl.constexpr,
+    O_S1: tl.constexpr,
+    V: tl.constexpr,
+    HAS_TEMP: tl.constexpr,
+    BLOCK_V: tl.constexpr,
+):
     """Whole row in one program: max, sumexp and the normalised store in ONE launch.
 
     No pmax/psum scratch and no second kernel -- the point of this file is to stop paying
@@ -94,16 +122,17 @@ def _wsr_one(logits_ptr, temp_ptr, out_ptr,
     b = tl.program_id(0)
     cols = tl.arange(0, BLOCK_V)
     cm = cols < V
-    csafe = tl.where(cm, cols, V - 1)                 # address always in-bounds
+    csafe = tl.where(cm, cols, V - 1)  # address always in-bounds
     x = tl.load(logits_ptr + b * L_S0 + csafe * L_S1)
     if HAS_TEMP:
         x = x / tl.load(temp_ptr + b)
-    x = tl.where(cm, x, NEG_INF)                      # register mask, never other=
+    x = tl.where(cm, x, NEG_INF)  # register mask, never other=
     gmax = tl.max(x)
     e = tl.exp(x - gmax)
     e = tl.where(cm, e, 0.0)
     gsum = tl.sum(e)
     tl.store(out_ptr + b * O_S0 + cols * O_S1, e / gsum, mask=cm)
+
 
 def wide_row_softmax(logits, temperatures, out):
     B = int(logits.shape[0])
@@ -117,8 +146,10 @@ def wide_row_softmax(logits, temperatures, out):
     single_v = min(max(1, triton.next_power_of_2(V)), 8192)
     if single_v >= V:
         # one tile holds the whole row -> one kernel, no scratch, no merge
-        L_S0 = int(logits.stride(0)); L_S1 = int(logits.stride(1))
-        O_S0 = int(out.stride(0));  O_S1 = int(out.stride(1))
+        L_S0 = int(logits.stride(0))
+        L_S1 = int(logits.stride(1))
+        O_S0 = int(out.stride(0))
+        O_S1 = int(out.stride(1))
         has_temp = temperatures is not None
         if has_temp:
             temp = temperatures.to(torch.float32)
@@ -128,9 +159,19 @@ def wide_row_softmax(logits, temperatures, out):
         else:
             temp = logits
         nw_s = 8 if single_v >= 2048 else (4 if single_v >= 512 else 1)
-        _wsr_one[(B,)](logits, temp, out,
-                       L_S0=L_S0, L_S1=L_S1, O_S0=O_S0, O_S1=O_S1,
-                       V=V, HAS_TEMP=has_temp, BLOCK_V=single_v, num_warps=nw_s)
+        _wsr_one[(B,)](
+            logits,
+            temp,
+            out,
+            L_S0=L_S0,
+            L_S1=L_S1,
+            O_S0=O_S0,
+            O_S1=O_S1,
+            V=V,
+            HAS_TEMP=has_temp,
+            BLOCK_V=single_v,
+            num_warps=nw_s,
+        )
         return out
     block_c = int(triton.next_power_of_2(max(C, 1)))
     pmax = torch.empty((B, C), device=dev, dtype=torch.float32)
@@ -142,20 +183,43 @@ def wide_row_softmax(logits, temperatures, out):
             temp = temp.contiguous()
         temp = temp.reshape(-1)
     else:
-        temp = pmax                                  # dummy, never dereferenced
+        temp = pmax  # dummy, never dereferenced
     L_S0 = int(logits.stride(0))
     L_S1 = int(logits.stride(1))
     O_S0 = int(out.stride(0))
     O_S1 = int(out.stride(1))
     nw = 4 if block_v >= 4096 else (4 if block_v >= 512 else 1)
     grid = (B * C,)
-    _wsr_partial[grid](logits, temp, pmax, psum,
-                       L_S0=L_S0, L_S1=L_S1, V=V, C=C, HAS_TEMP=has_temp,
-                       BLOCK_V=block_v, num_warps=nw)
-    _wsr_norm[grid](logits, temp, pmax, psum, out,
-                    L_S0=L_S0, L_S1=L_S1, O_S0=O_S0, O_S1=O_S1,
-                    V=V, C=C, BLOCK_C=block_c, HAS_TEMP=has_temp,
-                    BLOCK_V=block_v, num_warps=nw)
+    _wsr_partial[grid](
+        logits,
+        temp,
+        pmax,
+        psum,
+        L_S0=L_S0,
+        L_S1=L_S1,
+        V=V,
+        C=C,
+        HAS_TEMP=has_temp,
+        BLOCK_V=block_v,
+        num_warps=nw,
+    )
+    _wsr_norm[grid](
+        logits,
+        temp,
+        pmax,
+        psum,
+        out,
+        L_S0=L_S0,
+        L_S1=L_S1,
+        O_S0=O_S0,
+        O_S1=O_S1,
+        V=V,
+        C=C,
+        BLOCK_C=block_c,
+        HAS_TEMP=has_temp,
+        BLOCK_V=block_v,
+        num_warps=nw,
+    )
     return out
 
 

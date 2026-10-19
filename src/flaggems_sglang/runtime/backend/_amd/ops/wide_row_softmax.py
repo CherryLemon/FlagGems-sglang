@@ -27,10 +27,18 @@ NEG_INF = tl.constexpr(float("-inf"))
 
 
 @triton.jit
-def _wsr_partial(logits_ptr, temp_ptr, pmax_ptr, psum_ptr,
-                 L_S0: tl.constexpr, L_S1: tl.constexpr,
-                 V: tl.constexpr, C: tl.constexpr,
-                 HAS_TEMP: tl.constexpr, BLOCK_V: tl.constexpr):
+def _wsr_partial(
+    logits_ptr,
+    temp_ptr,
+    pmax_ptr,
+    psum_ptr,
+    L_S0: tl.constexpr,
+    L_S1: tl.constexpr,
+    V: tl.constexpr,
+    C: tl.constexpr,
+    HAS_TEMP: tl.constexpr,
+    BLOCK_V: tl.constexpr,
+):
     pid = tl.program_id(0)
     b = pid // C
     cb = pid - b * C
@@ -50,11 +58,22 @@ def _wsr_partial(logits_ptr, temp_ptr, pmax_ptr, psum_ptr,
 
 
 @triton.jit
-def _wsr_norm(logits_ptr, temp_ptr, pmax_ptr, psum_ptr, out_ptr,
-              L_S0: tl.constexpr, L_S1: tl.constexpr,
-              O_S0: tl.constexpr, O_S1: tl.constexpr,
-              V: tl.constexpr, C: tl.constexpr, BLOCK_C: tl.constexpr,
-              HAS_TEMP: tl.constexpr, BLOCK_V: tl.constexpr):
+def _wsr_norm(
+    logits_ptr,
+    temp_ptr,
+    pmax_ptr,
+    psum_ptr,
+    out_ptr,
+    L_S0: tl.constexpr,
+    L_S1: tl.constexpr,
+    O_S0: tl.constexpr,
+    O_S1: tl.constexpr,
+    V: tl.constexpr,
+    C: tl.constexpr,
+    BLOCK_C: tl.constexpr,
+    HAS_TEMP: tl.constexpr,
+    BLOCK_V: tl.constexpr,
+):
     pid = tl.program_id(0)
     b = pid // C
     cb = pid - b * C
@@ -62,7 +81,7 @@ def _wsr_norm(logits_ptr, temp_ptr, pmax_ptr, psum_ptr, out_ptr,
     # ---- merge this row's C partials here (was a separate finalise launch) ----
     offs = tl.arange(0, BLOCK_C)
     m = offs < C
-    osafe = tl.where(m, offs, 0)                    # lane 0 always in-bounds
+    osafe = tl.where(m, offs, 0)  # lane 0 always in-bounds
     pm = tl.load(pmax_ptr + b * C + osafe)
     pm = tl.where(m, pm, NEG_INF)
     gmax = tl.max(pm)
@@ -100,20 +119,43 @@ def wide_row_softmax(logits, temperatures, out):
             temp = temp.contiguous()
         temp = temp.reshape(-1)
     else:
-        temp = pmax                                  # dummy, never dereferenced
+        temp = pmax  # dummy, never dereferenced
     L_S0 = int(logits.stride(0))
     L_S1 = int(logits.stride(1))
     O_S0 = int(out.stride(0))
     O_S1 = int(out.stride(1))
     nw = 8 if block_v >= 2048 else (4 if block_v >= 512 else 1)
     grid = (B * C,)
-    _wsr_partial[grid](logits, temp, pmax, psum,
-                       L_S0=L_S0, L_S1=L_S1, V=V, C=C, HAS_TEMP=has_temp,
-                       BLOCK_V=block_v, num_warps=nw)
-    _wsr_norm[grid](logits, temp, pmax, psum, out,
-                    L_S0=L_S0, L_S1=L_S1, O_S0=O_S0, O_S1=O_S1,
-                    V=V, C=C, BLOCK_C=block_c, HAS_TEMP=has_temp,
-                    BLOCK_V=block_v, num_warps=nw)
+    _wsr_partial[grid](
+        logits,
+        temp,
+        pmax,
+        psum,
+        L_S0=L_S0,
+        L_S1=L_S1,
+        V=V,
+        C=C,
+        HAS_TEMP=has_temp,
+        BLOCK_V=block_v,
+        num_warps=nw,
+    )
+    _wsr_norm[grid](
+        logits,
+        temp,
+        pmax,
+        psum,
+        out,
+        L_S0=L_S0,
+        L_S1=L_S1,
+        O_S0=O_S0,
+        O_S1=O_S1,
+        V=V,
+        C=C,
+        BLOCK_C=block_c,
+        HAS_TEMP=has_temp,
+        BLOCK_V=block_v,
+        num_warps=nw,
+    )
     return out
 
 
