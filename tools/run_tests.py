@@ -1356,7 +1356,9 @@ def main():
     # Resolve to an absolute path: the benchmark subprocess runs with cwd set
     # to ROOT/"benchmark" (see run_benchmark_q), so a path relative to the repo
     # root would otherwise be looked up under benchmark/ and silently miss.
-    CFG.base_data = str(Path(OPTS.base_data).resolve()) if OPTS.base_data else None
+    CFG.base_data = (
+        str(Path(OPTS.base_data).resolve()) if OPTS.base_data else None
+    )
 
     # Apply color mode (IS_TTY controls cursor-based footer, USE_COLORS controls ANSI colors)
     global USE_COLORS, RED, GREEN, YELLOW, CYAN, DIM, NC
