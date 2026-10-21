@@ -20,6 +20,14 @@ from typing import List, Optional, Tuple
 import torch
 
 FLOAT_DTYPES = [torch.float16, torch.float32, torch.bfloat16]
+
+# (tokens, heads, head_dim, transposed_gate) for fused attention gating.
+FUSED_SIGMOID_MUL_SHAPES = [
+    (tokens, 32, 128, transposed)
+    for tokens in (1, 17, 256)
+    for transposed in (0, 1)
+]
+
 INT_DTYPES = [torch.int16, torch.int32]
 BOOL_DTYPES = [torch.bool]
 COMPLEX_DTYPES = [torch.complex64]
