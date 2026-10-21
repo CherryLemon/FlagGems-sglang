@@ -116,9 +116,9 @@ way it walks the generic tier — you do **not** need to re-export from
 
 Same idea, one level deeper:
 `_<vendor>/<arch>/ops/my_op.py`. `<arch>` is resolved via the vendor's
-`ARCH_MAP` (see `_nvidia/__init__.py`). Again: the op file's `__all__` is
-what gets discovered; the `ops/__init__.py` at this tier does not need any
-re-export.
+`ARCH_MAP` (see `_nvidia/__init__.py` and `_amd/__init__.py`). Again: the
+op file's `__all__` is what gets discovered; the `ops/__init__.py` at this
+tier does not need any re-export.
 
 ### 2.4 Verify the registration
 
