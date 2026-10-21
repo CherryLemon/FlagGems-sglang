@@ -60,8 +60,8 @@ _SQL_TYPES = {
 class SQLPersistantModel(PersistantModel):
     def __init__(self, db_url: str, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.engine: Final[sqlalchemy.engine.Engine] = sqlalchemy.create_engine(
-            db_url
+        self.engine: Final[sqlalchemy.engine.Engine] = (
+            sqlalchemy.create_engine(db_url)
         )
         self.sql_model_pool: Dict[str, Type[Base]] = {}
 
