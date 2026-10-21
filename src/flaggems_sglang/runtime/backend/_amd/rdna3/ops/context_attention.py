@@ -23,12 +23,10 @@ where the packed tensors are laid out as
 ``[total_tokens, num_heads, head_dim]``. The output is
 ``[total_tokens, num_heads, head_dim]`` in float32.
 
-gfx1100 has no TF32 matrix instructions, so an fp32 ``tl.dot`` runs on FMA
-units. Both products run as WMMA with fp32 accumulation instead, on fp16
-operands for float32 and float16 inputs and on bf16 operands for bfloat16
-inputs, whose range does not fit in fp16. The softmax weights are rounded
-to the operand type as well. fp16 keeps the 10-bit mantissa of TF32, but
-float32 inputs above 65504 in magnitude overflow.
+For float16 and bfloat16 inputs both products run as WMMA on the input
+type with fp32 accumulation, and the softmax weights are rounded to that
+type before the second one. float32 inputs stay in fp32: gfx1100 has no
+TF32 matrix instructions, so their products run on FMA units.
 
 This kernel is written in portable Triton only. It must NOT call any
 pre-compiled / vendor-specific cached operator (no
@@ -42,18 +40,7 @@ import triton
 import triton.language as tl
 
 _LOG2E = 1.4426950408889634
-
-
-@triton.jit
-def _cast_kv_fp16_kernel(
-    k_ptr, v_ptr, k16_ptr, v16_ptr, n, BLOCK: tl.constexpr
-):
-    offs = tl.program_id(0).to(tl.int64) * BLOCK + tl.arange(0, BLOCK)
-    mask = offs < n
-    k = tl.load(k_ptr + offs, mask=mask)
-    v = tl.load(v_ptr + offs, mask=mask)
-    tl.store(k16_ptr + offs, k.to(tl.float16), mask=mask)
-    tl.store(v16_ptr + offs, v.to(tl.float16), mask=mask)
+_DOT_DTYPE = {torch.float16: tl.float16, torch.bfloat16: tl.bfloat16}
 
 
 @triton.jit
@@ -282,24 +269,23 @@ def context_attention(
     # the padded columns do not affect the result.
     block_d = 1 << (head_dim - 1).bit_length()
 
-    dot_fp16 = q.dtype != torch.bfloat16
-    if block_d <= 64:
-        BLOCK_M, BLOCK_N = 64, 64
+    # Short sequences have few query blocks per (sequence, head): smaller
+    # blocks give more programs and compute fewer masked scores.
+    num_warps = 4
+    if q.dtype != torch.float32:
+        if block_d <= 64:
+            BLOCK_M, BLOCK_N = 64, 64
+        else:
+            BLOCK_M, BLOCK_N = (32, 32) if max_input_len <= 128 else (64, 32)
+    elif block_d <= 64:
+        BLOCK_M, BLOCK_N = (32, 16) if max_input_len <= 128 else (32, 32)
+    elif block_d <= 128 and max_input_len > 512:
+        # At BLOCK_D 128 with fp32 dots, 64x32 blocks on 8 warps and 32x16
+        # blocks sometimes write a wrong output block (Triton 3.6, ROCm 7.2).
+        BLOCK_M, BLOCK_N = 32, 32
     else:
-        # Short sequences have few query blocks per (sequence, head): smaller
-        # blocks give more programs and compute fewer masked scores.
-        BLOCK_M, BLOCK_N = (32, 32) if max_input_len <= 128 else (64, 32)
-
-    # With head_dim > 64, converting fp32 K/V blocks inside the kernel spills
-    # 1052-1204 B of registers per lane; fp16 copies made once cut it to
-    # 100-216 B.
-    if dot_fp16 and block_d > 64 and k.dtype == torch.float32 and k.numel():
-        k_c, v_c = k.contiguous(), v.contiguous()
-        k = torch.empty_like(k_c, dtype=torch.float16)
-        v = torch.empty_like(v_c, dtype=torch.float16)
-        _cast_kv_fp16_kernel[(triton.cdiv(k_c.numel(), 1024),)](
-            k_c, v_c, k, v, k_c.numel(), BLOCK=1024, num_warps=8
-        )
+        BLOCK_M, BLOCK_N = 16, 16
+        num_warps = 4 if block_d <= 128 else 2
 
     grid_m = max(1, triton.cdiv(max_input_len, BLOCK_M))
     grid = (grid_m, num_heads, B)
@@ -318,8 +304,8 @@ def context_attention(
         BLOCK_N=BLOCK_N,
         BLOCK_D=block_d,
         IS_CAUSAL=is_causal,
-        DOT_DTYPE=tl.float16 if dot_fp16 else tl.bfloat16,
-        num_warps=4,
+        DOT_DTYPE=_DOT_DTYPE.get(q.dtype, tl.float32),
+        num_warps=num_warps,
         num_stages=1,
     )
     return out
