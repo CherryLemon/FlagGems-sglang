@@ -14,10 +14,13 @@
 
 """fused_moe_router_cudacore for RDNA3 (gfx1100).
 
-Same kernels as the generic version. With at most 32 experts one program
-holds an experts-by-hidden tile of up to 32768 fp32 values, which the
-generic version runs on a single warp; the number of warps here grows with
-the tile, and with the number of experts when softcap is used.
+The kernels of the generic version, with two changes. With at most 32
+experts one program holds an experts-by-hidden tile of up to 32768 fp32
+values, which the generic version runs on a single warp; the number of warps
+here grows with the tile, and with the number of experts when softcap is
+used. With more than 32 experts a program of the logits kernel computes 1, 2
+or 4 tokens and can sum the products element-wise over the hidden loop
+before reducing them, with launch parameters by batch size and element size.
 """
 
 import torch
@@ -190,6 +193,38 @@ def _router_kernel(
 
 
 @triton.jit
+def _add_products(
+    acc, w, x_ptrs, t_live, h_live, EVEN: tl.constexpr, DEFER: tl.constexpr
+):
+    if EVEN:
+        x = tl.load(x_ptrs)
+    else:
+        x = tl.load(x_ptrs, mask=t_live & h_live, other=0.0)
+    p = w * x.to(tl.float32)[None, :]
+    if not DEFER:
+        p = tl.sum(p, axis=1)
+    return acc + p
+
+
+@triton.jit
+def _finish(
+    acc,
+    bias,
+    CAP: tl.constexpr,
+    HAS_CAP: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
+    DEFER: tl.constexpr,
+):
+    if DEFER:
+        acc = tl.sum(acc, axis=1)
+    if HAS_CAP:
+        acc = (2.0 * tl.sigmoid(2.0 * (acc / CAP)) - 1.0) * CAP
+    if HAS_BIAS:
+        acc += bias
+    return acc
+
+
+@triton.jit
 def _logits_kernel(
     x_ptr,
     w_ptr,
@@ -208,62 +243,65 @@ def _logits_kernel(
     BLOCK_E: tl.constexpr,
     BLOCK_H: tl.constexpr,
     BLOCK_M: tl.constexpr,
+    DEFER: tl.constexpr,
 ):
-    pid_m = tl.program_id(0)
-    expert_block = tl.program_id(1)
-    offs_e = expert_block * BLOCK_E + tl.arange(0, BLOCK_E)
+    # BLOCK_M tokens (1, 2 or 4) per program. With DEFER the products are
+    # summed element-wise over the hidden loop and reduced once after it.
+    offs_e = tl.program_id(1) * BLOCK_E + tl.arange(0, BLOCK_E)
     e_live = offs_e < E
-    t0 = pid_m * BLOCK_M
-    t1 = t0 + 1
-    acc0 = tl.zeros((BLOCK_E,), dtype=tl.float32)
-    acc1 = tl.zeros((BLOCK_E,), dtype=tl.float32)
+    t0 = tl.program_id(0) * BLOCK_M
     even = (H % BLOCK_H == 0) and (E % BLOCK_E == 0) and (BS % BLOCK_M == 0)
+    if DEFER:
+        acc0 = tl.zeros((BLOCK_E, BLOCK_H), dtype=tl.float32)
+        acc1 = tl.zeros((BLOCK_E, BLOCK_H), dtype=tl.float32)
+        acc2 = tl.zeros((BLOCK_E, BLOCK_H), dtype=tl.float32)
+        acc3 = tl.zeros((BLOCK_E, BLOCK_H), dtype=tl.float32)
+    else:
+        acc0 = tl.zeros((BLOCK_E,), dtype=tl.float32)
+        acc1 = tl.zeros((BLOCK_E,), dtype=tl.float32)
+        acc2 = tl.zeros((BLOCK_E,), dtype=tl.float32)
+        acc3 = tl.zeros((BLOCK_E,), dtype=tl.float32)
     for h0 in range(0, H, BLOCK_H):
         offs_h = h0 + tl.arange(0, BLOCK_H)
+        h_live = offs_h < H
+        w_ptrs = (
+            w_ptr + offs_e[:, None] * STRIDE_W_E + offs_h[None, :] * STRIDE_W_H
+        )
         if even:
-            w = tl.load(
-                w_ptr
-                + offs_e[:, None] * STRIDE_W_E
-                + offs_h[None, :] * STRIDE_W_H,
-            ).to(tl.float32)
-            x0 = tl.load(x_ptr + t0 * STRIDE_X_B + offs_h * STRIDE_X_H).to(
-                tl.float32
-            )
-            x1 = tl.load(x_ptr + t1 * STRIDE_X_B + offs_h * STRIDE_X_H).to(
-                tl.float32
-            )
+            w = tl.load(w_ptrs).to(tl.float32)
         else:
-            h_live = offs_h < H
             w = tl.load(
-                w_ptr
-                + offs_e[:, None] * STRIDE_W_E
-                + offs_h[None, :] * STRIDE_W_H,
-                mask=e_live[:, None] & h_live[None, :],
-                other=0.0,
+                w_ptrs, mask=e_live[:, None] & h_live[None, :], other=0.0
             ).to(tl.float32)
-            x0 = tl.load(
-                x_ptr + t0 * STRIDE_X_B + offs_h * STRIDE_X_H,
-                mask=(t0 < BS) & h_live,
-                other=0.0,
-            ).to(tl.float32)
-            x1 = tl.load(
-                x_ptr + t1 * STRIDE_X_B + offs_h * STRIDE_X_H,
-                mask=(t1 < BS) & h_live,
-                other=0.0,
-            ).to(tl.float32)
-        acc0 += tl.sum(w * x0[None, :], axis=1)
-        acc1 += tl.sum(w * x1[None, :], axis=1)
-    if HAS_CAP:
-        acc0 = (2.0 * tl.sigmoid(2.0 * (acc0 / CAP)) - 1.0) * CAP
-        acc1 = (2.0 * tl.sigmoid(2.0 * (acc1 / CAP)) - 1.0) * CAP
+        xp = x_ptr + t0 * STRIDE_X_B + offs_h * STRIDE_X_H
+        acc0 = _add_products(acc0, w, xp, t0 < BS, h_live, even, DEFER)
+        if BLOCK_M > 1:
+            acc1 = _add_products(
+                acc1, w, xp + STRIDE_X_B, t0 + 1 < BS, h_live, even, DEFER
+            )
+        if BLOCK_M > 2:
+            acc2 = _add_products(
+                acc2, w, xp + 2 * STRIDE_X_B, t0 + 2 < BS, h_live, even, DEFER
+            )
+            acc3 = _add_products(
+                acc3, w, xp + 3 * STRIDE_X_B, t0 + 3 < BS, h_live, even, DEFER
+            )
+    bias = 0.0
     if HAS_BIAS:
         bias = tl.load(bias_ptr + offs_e, mask=e_live, other=0.0).to(
             tl.float32
         )
-        acc0 += bias
-        acc1 += bias
-    tl.store(logits_ptr + t0 * E + offs_e, acc0, mask=e_live & (t0 < BS))
-    tl.store(logits_ptr + t1 * E + offs_e, acc1, mask=e_live & (t1 < BS))
+    out = logits_ptr + t0 * E + offs_e
+    logits = _finish(acc0, bias, CAP, HAS_CAP, HAS_BIAS, DEFER)
+    tl.store(out, logits, mask=e_live & (t0 < BS))
+    if BLOCK_M > 1:
+        logits = _finish(acc1, bias, CAP, HAS_CAP, HAS_BIAS, DEFER)
+        tl.store(out + E, logits, mask=e_live & (t0 + 1 < BS))
+    if BLOCK_M > 2:
+        logits = _finish(acc2, bias, CAP, HAS_CAP, HAS_BIAS, DEFER)
+        tl.store(out + 2 * E, logits, mask=e_live & (t0 + 2 < BS))
+        logits = _finish(acc3, bias, CAP, HAS_CAP, HAS_BIAS, DEFER)
+        tl.store(out + 3 * E, logits, mask=e_live & (t0 + 3 < BS))
 
 
 @triton.jit
@@ -301,6 +339,41 @@ def _next_pow2(value):
     while result < value:
         result *= 2
     return result
+
+
+# _logits_kernel launches with more than 32 experts, for router weights of 2
+# and of 4 bytes per element: up to a batch size, (tokens per program,
+# deferred reduction, experts per program, hidden block, warps).
+_LOGITS_LAUNCHES = {
+    2: (
+        (8, 1, False, 4, 2048, 8),
+        (64, 2, True, 8, 1024, 4),
+        (768, 2, True, 8, 512, 2),
+        (None, 2, True, 32, 256, 4),
+    ),
+    4: (
+        (8, 1, True, 4, 2048, 8),
+        (256, 2, True, 8, 512, 4),
+        (None, 4, True, 32, 128, 8),
+    ),
+}
+
+
+def _logits_launch(bs, hidden, element_size):
+    """(block_m, defer, block_e, block_h, num_warps)."""
+    # Hidden blocks of at least 32 lanes x 16 bytes, and at most one warp per
+    # such row, so that a warp covers one expert row of the tile: with warps
+    # over several expert rows, some launches (among them the generic one with
+    # a small hidden size and softcap) gave wrong, run-to-run varying logits
+    # on gfx1100.
+    row = 512 // element_size
+    launches = _LOGITS_LAUNCHES[4 if element_size >= 4 else 2]
+    _, block_m, defer, block_e, block_h, num_warps = next(
+        launch for launch in launches if launch[0] is None or bs <= launch[0]
+    )
+    block_h = max(min(block_h, _next_pow2(hidden)), row)
+    num_warps = min(num_warps, block_e * block_h // row)
+    return block_m, defer, block_e, block_h, num_warps
 
 
 def fused_moe_router_cudacore(
@@ -380,16 +453,8 @@ def fused_moe_router_cudacore(
             (bs, topk), dtype=torch.float32, device=x.device
         )
         topk_ids = torch.empty((bs, topk), dtype=torch.int32, device=x.device)
-        bias_arg = correction_bias if has_bias else x
-        sx = x.stride()
-        sw = weights.stride()
-        neg = -3.0e38
-        block_m = 2
-        block_e = 8 if experts >= 8 else _next_pow2(max(experts, 1))
-        block_h = (
-            2048
-            if hidden >= 2048
-            else (1024 if hidden >= 1024 else _next_pow2(hidden))
+        block_m, defer, block_e, block_h, num_warps = _logits_launch(
+            bs, hidden, weights.element_size()
         )
         grid_n = (experts + block_e - 1) // block_e
         grid_m = (bs + block_m - 1) // block_m
@@ -411,8 +476,9 @@ def fused_moe_router_cudacore(
             block_e,
             block_h,
             block_m,
-            num_warps=4,
-            num_stages=2,
+            defer,
+            num_warps=num_warps,
+            num_stages=1,
         )
 
         _topk_kernel[(bs,)](
