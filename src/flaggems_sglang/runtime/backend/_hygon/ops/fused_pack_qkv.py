@@ -107,8 +107,4 @@ def fused_pack_qkv(q, k, v, indices):
     return outputs
 
 
-def reference(q, k, v, indices):
-    return fused_pack_qkv(q, k, v, indices)
-
-
 __all__ = ["fused_pack_qkv"]
