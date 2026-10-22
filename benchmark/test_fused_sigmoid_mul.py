@@ -14,9 +14,9 @@
 
 import pytest
 import torch
-from flaggems_sglang.reference import get_reference
 
 import flaggems_sglang
+from flaggems_sglang.reference import get_reference
 
 from .attri_util import FUSED_SIGMOID_MUL_SHAPES
 from .op_benchmark import OpBenchmark
