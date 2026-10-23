@@ -15,11 +15,10 @@
 # SPDX-License-Identifier: Apache-2.0
 import torch
 import triton
-import triton as tr
 import triton.language as tl
 
 
-@tr.jit
+@triton.jit
 def _copy(
     D,
     S,
@@ -56,7 +55,7 @@ def _copy(
     tl.store(D + da, value, valid)
 
 
-@tr.jit
+@triton.jit
 def _linear_fast(
     D,
     S,
@@ -88,9 +87,9 @@ def _frozen_fast(dst, src, dim, offset, sz, offset_src):
     if n:
         if dst.is_contiguous() and src.is_contiguous():
             b = 2048
-            t = tr.cdiv(n, b)
+            t = triton.cdiv(n, b)
             narrow = max(dst.numel(), src.numel()) + b < 2**31
-            _linear_fast[(min(t, 32768), tr.cdiv(t, 32768))](
+            _linear_fast[(min(t, 32768), triton.cdiv(t, 32768))](
                 dst,
                 src,
                 offset,
@@ -105,8 +104,8 @@ def _frozen_fast(dst, src, dim, offset, sz, offset_src):
             )
             return dst
         b = 1024
-        t = tr.cdiv(n, b)
-        _copy[(min(t, 32768), tr.cdiv(t, 32768))](
+        t = triton.cdiv(n, b)
+        _copy[(min(t, 32768), triton.cdiv(t, 32768))](
             dst,
             src,
             offset,

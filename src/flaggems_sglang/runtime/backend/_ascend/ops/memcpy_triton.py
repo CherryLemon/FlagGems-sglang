@@ -14,11 +14,11 @@
 
 # SPDX-License-Identifier: Apache-2.0
 import torch  # noqa: F401
-import triton as tr
+import triton
 import triton.language as tl
 
 
-@tr.jit
+@triton.jit
 def _copy(
     D,
     S,
@@ -57,7 +57,7 @@ def _copy(
             break
 
 
-@tr.jit
+@triton.jit
 def _linear(
     D,
     S,
@@ -89,7 +89,7 @@ def memcpy_triton(dst, src, dim, offset, sz, offset_src):
     n = min(dst.shape[0], src.shape[0]) * w
     if n:
         b = 2048
-        t = tr.cdiv(n, b)
+        t = triton.cdiv(n, b)
         if dst.is_contiguous() and src.is_contiguous():
             _linear[(min(t, 4096),)](
                 dst,
