@@ -20,6 +20,14 @@ from typing import List, Optional, Tuple
 import torch
 
 FLOAT_DTYPES = [torch.float16, torch.float32, torch.bfloat16]
+
+# (tokens, heads, head_dim, transposed_gate) for fused attention gating.
+FUSED_SIGMOID_MUL_SHAPES = [
+    (tokens, 32, 128, transposed)
+    for tokens in (1, 17, 256)
+    for transposed in (0, 1)
+]
+
 INT_DTYPES = [torch.int16, torch.int32]
 BOOL_DTYPES = [torch.bool]
 COMPLEX_DTYPES = [torch.complex64]
@@ -118,6 +126,8 @@ def model_shapes():
 
 @dataclass
 class BenchmarkMetrics:
+    # Stable workload identity for case listing/replay (None in legacy runs).
+    case_id: Optional[str] = None
     # Legacy shape information for backward compatibility
     # This field corresponds to the 'size' field in
     # the previous version's benchmark.
@@ -140,6 +150,9 @@ class BenchmarkMetrics:
     utilization: Optional[float] = None
     # Speedup compared to base data
     compared_speedup: Optional[float] = None
+    # Which implementation was timed as the candidate ("override" when a
+    # dynamically injected candidate was invoked); None for the default path.
+    candidate_source: Optional[str] = None
     # Why the baseline comparison was skipped (op/shape/dtype missing).
     # None means "matched" or "--base-data not enabled". Excluded from metrics.
     base_miss_reason: Optional[str] = None
@@ -150,8 +163,10 @@ class BenchmarkMetrics:
 ALL_AVAILABLE_METRICS = set(
     map(lambda x: x.name, fields(BenchmarkMetrics))
 ) - {
+    "case_id",
     "legacy_shape",
     "shape_detail",
+    "candidate_source",
     "base_miss_reason",
 }
 

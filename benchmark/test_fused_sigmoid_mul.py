@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Benchmark for activation_norm/fused_sigmoid_mul."""
-
 import pytest
 import torch
 
