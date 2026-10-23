@@ -22,7 +22,6 @@ For every request i with step_indices_raw[i] >= 0:
 own strides and adjacent draft steps share elements.  Fills `dst` in place and returns it.
 """
 
-import torch
 import triton
 import triton.language as tl
 
@@ -78,37 +77,12 @@ def _cws_rows(
     )
 
 
-_NAMES = ("dst", "src", "dst_indices_raw", "step_indices_raw")
-
-
-def _bind(args, kwargs):
-    out = {}
-    for name in _NAMES:
-        if name in kwargs:
-            out[name] = kwargs[name]
-    pos = list(args)
-    for name in _NAMES:
-        if name in out:
-            continue
-        if not pos:
-            raise RuntimeError(f"{OP}: could not bind argument {name!r}")
-        val = pos.pop(0)
-        if not torch.is_tensor(val):
-            raise RuntimeError(
-                f"{OP}: {name!r} should be a tensor, got {type(val)}"
-            )
-        out[name] = val
-    return out
-
-
 def _pow2(x):
     return 1 << (max(1, int(x)) - 1).bit_length()
 
 
-def conv_window_scatter_with_mask(*args, **kwargs):
-    c = _bind(args, kwargs)
-    dst, src = c["dst"], c["src"]
-    dslot, sstep = c["dst_indices_raw"], c["step_indices_raw"]
+def conv_window_scatter_with_mask(dst, src, dst_indices_raw, step_indices_raw):
+    dslot, sstep = dst_indices_raw, step_indices_raw
     if int(dst.dim()) != 4 or int(src.dim()) != 5:
         raise RuntimeError(
             f"{OP}: expected dst[layers,cache,dim,K-1] and "
