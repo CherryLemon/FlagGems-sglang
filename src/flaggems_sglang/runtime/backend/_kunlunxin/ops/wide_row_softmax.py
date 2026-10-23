@@ -223,12 +223,4 @@ def wide_row_softmax(logits, temperatures, out):
     return out
 
 
-def solution(logits, temperatures, out):
-    return wide_row_softmax(logits, temperatures, out)
-
-
-def reference(logits, temperatures, out):
-    return wide_row_softmax(logits, temperatures, out)
-
-
-__all__ = ["wide_row_softmax", "solution", "reference"]
+__all__ = ["wide_row_softmax"]
