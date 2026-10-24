@@ -16,10 +16,6 @@ import torch
 import triton
 import triton.language as tl
 
-import flaggems_sglang
-
-_DEVICE = torch.device(flaggems_sglang.device)
-
 _ROW_BLOCK_MIN_BH = 1024
 
 
