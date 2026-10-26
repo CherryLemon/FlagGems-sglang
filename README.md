@@ -36,7 +36,7 @@ import flaggems_sglang
 x = torch.randn(1024, device='cuda')
 
 # Apply ReLU activation
-y = flaggems_sglang.ops.relu(x)
+y = flaggems_sglang.relu(x)
 ```
 
 ## Tests and Benchmark Quick Start
