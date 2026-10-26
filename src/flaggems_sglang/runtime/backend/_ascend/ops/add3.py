@@ -60,29 +60,19 @@ def _add3_persistent_kernel(
 
 @functools.lru_cache(maxsize=None)
 def _launch_config():
-    """Return (resident programs, block size) for the active backend."""
+    """Return (resident programs, block size).
+
+    Element-wise work runs on the AI vector cores; a 4096-element bf16 block
+    keeps all operands well inside the 192 KB unified buffer.
+    """
     driver = triton.runtime.driver.active
-    backend = driver.get_current_target().backend
     try:
         props = driver.utils.get_device_properties(driver.get_current_device())
     except Exception:
         props = {}
 
-    if backend == "gcu":
-        # Enflame S60: 2 clusters x 12 SIPs; 32768-element blocks measured
-        # fastest on a rented S60.
-        cores = (
-            props.get("multiprocessor_count", 2)
-            * driver.get_current_target().warp_size
-        )
-        return max(1, cores), 32768
-    if backend == "npu":
-        # Ascend: element-wise work runs on the AI vector cores; a 4096-element
-        # bf16 block keeps all operands well inside the 192 KB unified buffer.
-        cores = props.get("num_vectorcore") or props.get("num_aicore") or 40
-        return max(1, cores), 4096
-    cores = props.get("multiprocessor_count") or props.get("num_aicore") or 64
-    return max(1, cores), 8192
+    cores = props.get("num_vectorcore") or props.get("num_aicore") or 40
+    return max(1, cores), 4096
 
 
 def add3(a, b, c):

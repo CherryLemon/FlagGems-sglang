@@ -18,41 +18,26 @@ import triton.language as tl
 
 
 @triton.jit
-def _add3_kernel_ab(
-    a_ptr,
-    b_ptr,
-    ab_ptr,
-    n_elements,
-    BLOCK_SIZE: tl.constexpr,
-):
-    pid = tl.program_id(0)
-    offsets = (pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)).to(tl.int32)
-    mask = offsets < n_elements
-    a = tl.load(a_ptr + offsets, mask=mask).to(tl.float32)
-    b = tl.load(b_ptr + offsets, mask=mask).to(tl.float32)
-    ab = a + b
-    bits = ab.to(tl.int32, bitcast=True)
-    lsb = (bits >> 16) & 1
-    rounded_bits = (bits + 32767 + lsb) & -65536
-    rounded_fp32 = rounded_bits.to(tl.float32, bitcast=True)
-    tl.store(ab_ptr + offsets, rounded_fp32.to(tl.bfloat16), mask=mask)
-
-
-@triton.jit
-def _add3_kernel_abc(
-    ab_ptr,
-    c_ptr,
+def _add_round_bf16_kernel(
+    x_ptr,
+    y_ptr,
     out_ptr,
     n_elements,
     BLOCK_SIZE: tl.constexpr,
 ):
+    """out = bf16(x + y), summed in fp32 and rounded to nearest-even.
+
+    Both of add3's roundings are this same operation, so one kernel runs
+    twice: once for a + b, then once for that result + c.
+    """
     pid = tl.program_id(0)
     offsets = (pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)).to(tl.int32)
     mask = offsets < n_elements
-    ab = tl.load(ab_ptr + offsets, mask=mask).to(tl.float32)
-    c = tl.load(c_ptr + offsets, mask=mask).to(tl.float32)
-    out = ab + c
-    bits = out.to(tl.int32, bitcast=True)
+    x = tl.load(x_ptr + offsets, mask=mask).to(tl.float32)
+    y = tl.load(y_ptr + offsets, mask=mask).to(tl.float32)
+    total = x + y
+    # The device's fp32->bf16 convert truncates, so round to nearest here.
+    bits = total.to(tl.int32, bitcast=True)
     lsb = (bits >> 16) & 1
     rounded_bits = (bits + 32767 + lsb) & -65536
     rounded_fp32 = rounded_bits.to(tl.float32, bitcast=True)
@@ -70,7 +55,7 @@ def add3(a, b, c):
 
     ab = torch.empty(n_elements, dtype=torch.bfloat16, device=a.device)
 
-    _add3_kernel_ab[grid](
+    _add_round_bf16_kernel[grid](
         a,
         b,
         ab,
@@ -79,7 +64,7 @@ def add3(a, b, c):
         num_warps=1,
     )
 
-    _add3_kernel_abc[grid](
+    _add_round_bf16_kernel[grid](
         ab,
         c,
         out,
