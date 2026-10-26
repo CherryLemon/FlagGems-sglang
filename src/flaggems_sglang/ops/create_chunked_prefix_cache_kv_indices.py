@@ -96,15 +96,6 @@ def _ccpk_rows(
         tl.store(dst_row + off, data, mask=m)
 
 
-def _detect_vendor(device):
-    # Platform upload precheck forbids importing os -- vendor routing keys
-    # on device.type only (gcu->enflame, npu->ascend, xpu->kunlunxin);
-    # CUDA-class devices take the default order chain.
-    return {"gcu": "enflame", "npu": "ascend", "xpu": "kunlunxin"}.get(
-        device.type, device.type
-    )
-
-
 def create_chunked_prefix_cache_kv_indices(*args, **kwargs):
     """In-place CSR gather; returns chunk_kv_indices.
 
@@ -183,24 +174,11 @@ def create_chunked_prefix_cache_kv_indices(*args, **kwargs):
         else chunk_kv_indices.contiguous()
     )
 
-    vendor = _detect_vendor(req_to_token.device)
     errors = []
-    # Round-2 (2026-09-25): the reference is a per-request Python loop, so
-    # every Triton variant is already 20-106x; widening BLOCK cuts the inner
-    # loop iterations (less loop/launch overhead) -- the cheapest lever to
-    # close the 42.67x -> 49.11x leader gap.  ascend/huawei keep a 1024 head
-    # (verified 24.67x) then widen.
-    if vendor in ("enflame", "gcu"):
-        orders = ((1024, 4), (2048, 4), (512, 4), (4096, 4), (256, 4))
-    elif vendor in ("hygon", "ascend", "npu"):
-        # r4 (2026-09-25): keep the r3b 2048-head win for 海/华 (50.79/31.11).
-        orders = ((2048, 4), (1024, 4), (4096, 4), (512, 4), (256, 4))
-    elif vendor == "iluvatar":
-        # r4: 沐 recover to the r2 medium config (25.29 best) -- r3b wide hurt it.
-        orders = ((2048, 4), (4096, 4), (1024, 4), (512, 4), (256, 4))
-    else:
-        # metax/kunlunxin/国A/国B: r3b wide wins (天139.84/昆39.38/国A36.97/国B36.28).
-        orders = ((4096, 8), (2048, 4), (1024, 8), (8192, 8), (512, 4))
+    # Vendor-neutral default launch order. Each backend overrides this op
+    # (flaggems_sglang.runtime.backend._<vendor>.ops) with its own tuned
+    # BLOCK / num_warps chain; vendor-specific tuning does not belong here.
+    orders = ((2048, 4), (1024, 4), (4096, 4), (512, 4), (256, 4))
 
     for blk, nw in orders:
         try:
