@@ -16,13 +16,20 @@ import torch
 import triton
 import triton.language as tl
 
-_SMALL_CHUNK = 16
-
 _LIST_SUM_MAX_BS = 256
 
-_SINGLE_CTA_MAX_BS = 64
+# Above this batch size the single-CTA kernel keeps running correctly but
+# benefits from more warps to cover the wider BLOCK.
+_WIDE_WARPS_MIN_BS = 64
 
 
+# Single-CTA scatter. One program handles the whole batch: a BLOCK-wide
+# arange covers every row, so the target/free offsets come straight from a
+# single cumsum with no cross-CTA prefix to stitch together. This is the only
+# path: the former multi-CTA `_kernel` tripped a FlagTree layout-propagation
+# crash (RemoveLayoutConversions cloneElementwise, `operandEnc` assertion) for
+# every bs > 64 when broadcasting the cumsum-derived row offset into the 2D
+# store pointer, so it could never actually compile.
 @triton.jit
 def _kernel_small(
     out_ptr,
@@ -51,56 +58,6 @@ def _kernel_small(
     cols = tl.arange(0, NVP)[None, :]
     base = offs[:, None] * NV
     rm2 = m[:, None] & (cols < NV)
-    row = tl.load(out_ptr + base + cols, mask=rm2, other=0)
-
-    keep = rm2 & (cols < (nb + 1)[:, None])
-    tl.store(buf_ptr + 2 + t_off[:, None] + cols, row, mask=keep)
-
-    fd = f_off - NV + fb
-    fmask = rm2 & (cols >= (NV - fb)[:, None])
-    tl.store(buf_ptr + 2 + bs * NV + fd[:, None] + cols, row, mask=fmask)
-
-
-@triton.jit
-def _kernel(
-    out_ptr,
-    drafts_ptr,
-    frees_ptr,
-    buf_ptr,
-    bs,
-    NV: tl.constexpr,
-    NVP: tl.constexpr,
-    BLOCK: tl.constexpr,
-    CH: tl.constexpr,
-):
-    pid = tl.program_id(0)
-    r0 = pid * CH
-
-    offs = tl.arange(0, BLOCK)
-    m = offs < bs
-    n = tl.load(drafts_ptr + offs, mask=m, other=0).to(tl.int32)
-    f = tl.load(frees_ptr + offs, mask=m, other=0).to(tl.int32)
-    tot_n = tl.sum(n, axis=0)
-    tot_f = tl.sum(f, axis=0)
-    if pid == 0:
-        elem_ty = buf_ptr.dtype.element_ty
-        tl.store(buf_ptr, (tot_n + bs).to(elem_ty))
-        tl.store(buf_ptr + 1, tot_f.to(elem_ty))
-        if tot_f == 0:
-            tl.store(buf_ptr + 2 + bs * NV, (tot_n - tot_n).to(elem_ty))
-    head_n = tl.sum(tl.where(offs < r0, n, 0), axis=0)
-    head_f = tl.sum(tl.where(offs < r0, f, 0), axis=0)
-
-    rows = r0 + tl.arange(0, CH)
-    rm = rows < bs
-    nb = tl.load(drafts_ptr + rows, mask=rm, other=0).to(tl.int32)
-    fb = tl.load(frees_ptr + rows, mask=rm, other=0).to(tl.int32)
-    t_off = head_n + tl.cumsum(nb, axis=0) - nb + rows
-    f_off = head_f + tl.cumsum(fb, axis=0) - fb
-
-    cols = tl.arange(0, NVP)[None, :]
-    base = rows[:, None] * NV
-    rm2 = rm[:, None] & (cols < NV)
     row = tl.load(out_ptr + base + cols, mask=rm2, other=0)
 
     keep = rm2 & (cols < (nb + 1)[:, None])
@@ -151,34 +108,18 @@ def get_target_cache_loc(
 
     buf = torch.empty(2 + 2 * bs * nv, dtype=dtype, device=dev)
 
-    if bs <= _SINGLE_CTA_MAX_BS:
-        block = _pow2_at_least(bs)
-        _kernel_small[(1,)](
-            out,
-            drafts,
-            frees,
-            buf,
-            bs,
-            NV=nv,
-            NVP=nvp,
-            BLOCK=block,
-            num_warps=1,
-        )
-    else:
-        block = _pow2_at_least(bs)
-        ch = _SMALL_CHUNK if bs <= 256 else _SINGLE_CTA_MAX_BS
-        _kernel[((bs + ch - 1) // ch,)](
-            out,
-            drafts,
-            frees,
-            buf,
-            bs,
-            NV=nv,
-            NVP=nvp,
-            BLOCK=block,
-            CH=ch,
-            num_warps=1 if bs <= 256 else 8,
-        )
+    block = _pow2_at_least(bs)
+    _kernel_small[(1,)](
+        out,
+        drafts,
+        frees,
+        buf,
+        bs,
+        NV=nv,
+        NVP=nvp,
+        BLOCK=block,
+        num_warps=1 if bs <= _WIDE_WARPS_MIN_BS else 8,
+    )
 
     counts_ready.synchronize()
     if bs <= _LIST_SUM_MAX_BS:
