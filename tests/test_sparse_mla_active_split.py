@@ -39,39 +39,15 @@ def _fixture(rows, seed):
 
 
 def _reference(inputs):
-    """Literal FP64 selected-key attention; no candidate helpers or Triton."""
-    query = inputs["q"][:, :4].double()  # [SQ, H=4, DQK=576]
-    cache = inputs["kv"][:, 0].double()  # [physical slots, DQK=576]
-    indices = inputs["indices"][:, 0].long()  # [SQ, selected positions=2048]
-    lengths = inputs["lengths"].long()  # [SQ], length along selected positions
-    sink = inputs["sink"][:4].double()  # [H=4], one denominator term per head
-    result = []
-    maximum = []
-    lse = []
-    for row in range(query.shape[0]):
-        valid = (
-            (torch.arange(2048) < lengths[row])
-            & (indices[row] >= 0)
-            & (indices[row] < cache.shape[0])
-        )
-        selected = cache[
-            indices[row, valid]
-        ]  # [valid selected positions, 576]
-        if selected.shape[0] == 0:
-            result.append(torch.zeros((4, 512), dtype=torch.float64))
-            maximum.append(torch.full((4,), -torch.inf, dtype=torch.float64))
-            lse.append(torch.full((4,), torch.inf, dtype=torch.float64))
-            continue
-        scores = query[row] @ selected.T * (576**-0.5)  # [H, selected]
-        maximum.append(scores.max(dim=-1).values)
-        kv_lse = torch.logsumexp(scores, dim=-1)  # KV-only statistics
-        lse.append(kv_lse)
-        denominator = torch.logaddexp(kv_lse, sink)
-        probabilities = torch.exp(scores - denominator[:, None])
-        output = probabilities @ selected[:, :512]
-        output[torch.isposinf(sink)] = 0
-        result.append(output)
-    return torch.stack(result), torch.stack(maximum), torch.stack(lse)
+    """Dispatch the independent library reference with FP64 CPU inputs."""
+    from flaggems_sglang.reference import get_reference
+
+    reference = get_reference("sparse_mla_active_split")
+    inputs = {
+        key: value.double() if value.is_floating_point() else value
+        for key, value in inputs.items()
+    }
+    return reference(**inputs, sm_scale=576**-0.5, active_heads=4)
 
 
 def _assert_math(actual, expected):
@@ -154,15 +130,15 @@ def test_sparse_mla_active_split_graph_updates(rows):
     stream.synchronize()
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph, stream=stream):
-        captured = operator(
-            **device_inputs, sm_scale=576**-0.5, active_heads=4
-        )
+        captured = forward()
     # Retain the original input/output owners for the entire graph lifetime.
     for state_index in (0, 1, 0):
         for key, value in states[state_index].items():
             device_inputs[key].copy_(value)
         saved = {key: value.clone() for key, value in device_inputs.items()}
         for _ in range(10):
+            for output in captured:
+                output.fill_(torch.nan)
             graph.replay()
             torch.cuda.synchronize()
             _assert_math(captured, expected[state_index])

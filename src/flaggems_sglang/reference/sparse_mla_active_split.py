@@ -7,15 +7,20 @@ import torch
 
 def reference(q, kv, indices, sm_scale, active_heads, sink, lengths):
     rows = q.shape[0]
+    compute_dtype = (
+        torch.float64 if q.dtype == torch.float64 else torch.float32
+    )
     slots = indices[:, 0].long()
     valid = (
         (slots >= 0)
         & (slots < kv.shape[0])
         & (torch.arange(2048, device=q.device)[None, :] < lengths[:, None])
     )
-    selected = kv[:, 0][slots.clamp(0, kv.shape[0] - 1)].float()
+    selected = kv[:, 0][slots.clamp(0, kv.shape[0] - 1)].to(compute_dtype)
     scores = (
-        torch.bmm(q[:, :active_heads].float(), selected.transpose(1, 2))
+        torch.bmm(
+            q[:, :active_heads].to(compute_dtype), selected.transpose(1, 2)
+        )
         * sm_scale
     )
     scores = scores.masked_fill(~valid[:, None], -torch.inf)
