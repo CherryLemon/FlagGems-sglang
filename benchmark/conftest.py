@@ -22,6 +22,11 @@ import torch
 import yaml
 
 import flaggems_sglang
+from flaggems_sglang.cli_override import (
+    add_override_arguments,
+    cleanup_overrides,
+    configure_overrides,
+)
 from flaggems_sglang.runtime import torch_device_fn
 
 from . import consts
@@ -163,6 +168,7 @@ def pytest_addhooks(pluginmanager):
 
 
 def pytest_addoption(parser):
+    add_override_arguments(parser)
     parser.addoption(
         (
             "--mode" if vendor_name != "kunlunxin" else "--fg_mode"
@@ -454,8 +460,8 @@ def pytest_configure(config):
         raise pytest.UsageError(
             "profile warmup must be non-negative and iterations positive"
         )
-    # Compose with the optional dynamic override registry if present.
-    Config.override_registry = getattr(config, "_override_registry", None)
+    # Share one override registry with correctness tests in mixed sessions.
+    Config.override_registry = configure_overrides(config)
     Config.profile_hook = config.hook.pytest_flaggems_profile_scope
 
     if Config.record_json or Config.list_cases:
@@ -493,6 +499,10 @@ def pytest_configure(config):
         recordLogger.addHandler(handler)
         recordLogger.setLevel(logging.INFO)
         emit_record_logger("Benchmark record logger enabled")
+
+
+def pytest_unconfigure(config):
+    cleanup_overrides(config)
 
 
 @pytest.fixture(scope="session", autouse=True)

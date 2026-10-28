@@ -27,7 +27,8 @@ import yaml
 import flaggems_sglang
 from flaggems_sglang.cli_override import (
     add_override_arguments,
-    apply_overrides_from_args,
+    cleanup_overrides,
+    configure_overrides,
 )
 
 BUILTIN_MARKS = {
@@ -142,13 +143,12 @@ def pytest_configure(config):
         )
 
     # Apply dynamic operator overrides
-    config._override_registry = apply_overrides_from_args(config.option)
+    configure_overrides(config)
 
 
 def pytest_unconfigure(config):
     """Cleanup: restore all overridden operators."""
-    if hasattr(config, "_override_registry"):
-        config._override_registry.restore_all()
+    cleanup_overrides(config)
 
 
 def pytest_runtest_teardown(item, nextitem):
