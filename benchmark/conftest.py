@@ -640,6 +640,8 @@ def pytest_runtest_logreport(report):
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """Combine and dump the result into JSON."""
+    if getattr(config, "_dummy_probe", None) is not None:
+        return
     if Config.list_cases:
         with open(REPORT_FILE, "w") as f:
             json.dump(

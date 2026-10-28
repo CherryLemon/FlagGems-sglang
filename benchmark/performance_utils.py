@@ -974,6 +974,12 @@ class Benchmark:
             case_ids if case_ids is not None else configured_case_ids
         )
 
+        probe = getattr(
+            getattr(Config, "override_registry", None), "_dummy_probe", None
+        )
+        if probe is not None:
+            return probe.run_benchmark(self, selected_case_ids)
+
         if getattr(Config, "list_cases", False):
             if selected_case_ids:
                 raise ValueError(
