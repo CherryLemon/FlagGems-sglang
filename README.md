@@ -63,5 +63,7 @@ pytest -q benchmark/test_silu_and_mul.py --level core --iter 1 --warmup 1
 
 - Most tests/benchmarks require a CUDA-capable GPU runtime.
 - `--collect-only` is recommended first to quickly check import and discovery.
+- `silu_and_mul` supports tensor-free benchmark case listing and exact replay;
+  see [the case API guide](docs/benchmark_case_api.md).
 
 This project is licensed under the [Apache (version 2.0) License](./LICENSE).

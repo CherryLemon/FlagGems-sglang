@@ -48,10 +48,18 @@ BUILTIN_MARKS = (
 REGISTERED_MARKS = []
 TEST_RESULTS = {}
 CASE_LISTS = []
+LISTED_CASE_IDS = set()
 REPORT_FILE = "benchmark_result.json"
 
 
 def update_case_list(data):
+    cases = data.get("cases", [])
+    if not cases:
+        raise ValueError("Cannot publish an empty benchmark case list.")
+    ids = [case["case_id"] for case in cases]
+    if len(ids) != len(set(ids)) or LISTED_CASE_IDS.intersection(ids):
+        raise ValueError("Benchmark catalog contains duplicate case IDs.")
+    LISTED_CASE_IDS.update(ids)
     CASE_LISTS.append(data)
 
 
@@ -408,6 +416,7 @@ def pytest_configure(config):
 
     # ---- Case listing / exact replay (PR 6397) --------------------------
     CASE_LISTS.clear()
+    LISTED_CASE_IDS.clear()
     TEST_RESULTS.clear()
     Config.list_cases = config.getoption("--list-cases")
     Config.case_ids = config.getoption("--case-id")
@@ -673,6 +682,14 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
 def pytest_sessionfinish(session, exitstatus):
     if Config is None:
+        return
+
+    if Config.list_cases and not CASE_LISTS:
+        if session.exitstatus in (
+            pytest.ExitCode.OK,
+            pytest.ExitCode.NO_TESTS_COLLECTED,
+        ):
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
         return
 
     if Config.preflight_only:

@@ -577,6 +577,10 @@ class Benchmark:
             for dtype in self.to_bench_dtypes
             for case in self.get_case_iter(dtype)
         )
+        if not cases:
+            raise ValueError(
+                f"Operator '{self.op_name}' generated no benchmark cases."
+            )
         ids = [case.case_id for case in cases]
         if len(ids) != len(set(ids)):
             raise ValueError(
