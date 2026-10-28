@@ -329,7 +329,8 @@ def test_later_benchmark_in_the_same_item_cannot_erase_a_catalog_error(
     pytester, dummy_project, skip_after_runs
 ):
     path = "benchmark/test_catalog_error.py"
-    source = textwrap.dedent("""
+    source = textwrap.dedent(
+        """
             from copy import copy
             import pytest
             import torch
@@ -356,7 +357,8 @@ def test_later_benchmark_in_the_same_item_cannot_erase_a_catalog_error(
                 monkeypatch.setattr(bad, '_collect_cases', broken_catalog)
                 bad.run()
                 good.run()
-            """)
+            """
+    )
     if skip_after_runs:
         source += "\n    pytest.skip('after runs')\n"
     (pytester.path / path).write_text(source)
@@ -419,7 +421,9 @@ def test_case_selection_is_resolved_across_all_outer_pytest_parameters(
     pytester, dummy_project
 ):
     path = "benchmark/test_outer_dummy.py"
-    (pytester.path / path).write_text(textwrap.dedent("""
+    (pytester.path / path).write_text(
+        textwrap.dedent(
+            """
             from pathlib import Path
             import pytest
             import torch
@@ -449,7 +453,9 @@ def test_case_selection_is_resolved_across_all_outer_pytest_parameters(
                 )
                 bench.set_gems(forbidden)
                 bench.run()
-            """))
+            """
+        )
+    )
     selected = path + "::test_outer[second]::core::float32::1"
     result, data = _run(
         pytester, path, options=("--level=core", f"--case-id={selected}")
@@ -571,7 +577,8 @@ def test_repeated_pytest_sessions_restore_candidate_and_disable_probe(
         "def test_original_is_restored():\n"
         "    assert not hasattr(flaggems_sglang, 'dummy_probe')\n"
     )
-    script = pytester.makepyfile(twice=f"""
+    script = pytester.makepyfile(
+        twice=f"""
         import sys
         sys.path.insert(0, {str(dummy_project / 'src')!r})
         import pytest
@@ -583,7 +590,8 @@ def test_repeated_pytest_sessions_restore_candidate_and_disable_probe(
         assert not hasattr(flaggems_sglang, 'dummy_probe')
         assert pytest.main(['tests/test_after_probe.py', '-q']) == 0
         assert not hasattr(flaggems_sglang, 'dummy_probe')
-        """)
+        """
+    )
     result = pytester.run(sys.executable, str(script), timeout=180)
     assert result.ret == 0
     assert (
