@@ -385,13 +385,18 @@ class Benchmark:
         self.mode = Config.mode
         self.set_dtypes(Config.user_desired_dtypes)
         self.set_metrics(Config.user_desired_metrics)
-        if vendor_name == "kunlunxin":
-            # Speed Up Benchmark Test, Big Shape Will Cause Timeout
-            Config.shape_file = os.path.join(
-                os.path.dirname(__file__),
-                "../src/flaggems_sglang/runtime/backend/_kunlunxin/"
-                "core_shapes.yaml",
-            )
+        # Prefer a vendor-specific core_shapes.yaml when one is shipped under
+        # the backend (e.g. kunlunxin speeds up its run / avoids big-shape
+        # timeouts; enflame pins its own shape set). Any backend that drops a
+        # core_shapes.yaml into its `_<vendor>` dir is picked up automatically;
+        # if the file is absent we fall back to the shared default.
+        vendor_shape_file = os.path.join(
+            os.path.dirname(__file__),
+            "../src/flaggems_sglang/runtime/backend/"
+            f"_{vendor_name}/core_shapes.yaml",
+        )
+        if os.path.isfile(vendor_shape_file):
+            Config.shape_file = vendor_shape_file
         self.set_shapes(Config.shape_file)
 
     def set_gems(self, gems_op):
