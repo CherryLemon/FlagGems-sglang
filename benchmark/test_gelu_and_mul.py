@@ -20,7 +20,7 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-from .op_benchmark import OpBenchmark
+from .op_benchmark import OpBenchmark, is_case_listing
 
 # Shapes match kernel-comp-baseline/problems/activation_norm/gelu_and_mul.
 SHAPES = [(bs, d) for bs in (1, 8, 64, 512, 4096) for d in (1024, 4096, 8192)]
@@ -40,9 +40,11 @@ def _input_fn(shape, cur_dtype, device):
 @pytest.mark.gelu_and_mul
 def test_perf_gelu_and_mul():
     # This op has a reference but no Triton implementation yet.
-    gems_op = flaggems_sglang.get_op("gelu_and_mul")
-    if gems_op is None:
-        pytest.skip("activation_norm/gelu_and_mul not implemented yet")
+    gems_op = None
+    if not is_case_listing():
+        gems_op = flaggems_sglang.get_op("gelu_and_mul")
+        if gems_op is None:
+            pytest.skip("activation_norm/gelu_and_mul not implemented yet")
     bench = OpBenchmark(
         op_name="gelu_and_mul",
         torch_op=get_reference("gelu_and_mul"),

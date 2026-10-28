@@ -55,5 +55,5 @@ def test_perf_ltx2_split_rotary():
         more_shapes=MORE_SHAPES,
         shape_desc="batch, seq_len, num_heads, head_dim",
     )
-    bench.set_gems(flaggems_sglang.ltx2_split_rotary)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

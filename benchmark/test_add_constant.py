@@ -52,5 +52,5 @@ def test_perf_add_constant():
         more_shapes=MORE_SHAPES,
         shape_desc="n",
     )
-    bench.set_gems(flaggems_sglang.add_constant)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

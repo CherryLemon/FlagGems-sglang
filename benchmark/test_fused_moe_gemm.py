@@ -56,5 +56,5 @@ def test_perf_fused_moe_gemm():
         more_shapes=MORE_SHAPES,
         shape_desc="T, E, N, K, top_k",
     )
-    bench.set_gems(flaggems_sglang.fused_moe_gemm)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

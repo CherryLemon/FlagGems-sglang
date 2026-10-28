@@ -49,5 +49,5 @@ def test_perf_memcpy_triton():
         more_shapes=MORE_SHAPES,
         shape_desc="rows, hidden",
     )
-    bench.set_gems(flaggems_sglang.memcpy_triton)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

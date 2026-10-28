@@ -67,5 +67,5 @@ def test_perf_merge_state():
         more_shapes=MORE_SHAPES,
         shape_desc="n_tokens, num_heads, head_size",
     )
-    bench.set_gems(flaggems_sglang.merge_state)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

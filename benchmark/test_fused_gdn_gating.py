@@ -58,5 +58,5 @@ def test_perf_fused_gdn_gating():
         more_shapes=MORE_SHAPES,
         shape_desc="batch, num_heads",
     )
-    bench.set_gems(flaggems_sglang.fused_gdn_gating)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

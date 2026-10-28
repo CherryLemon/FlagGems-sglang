@@ -57,5 +57,5 @@ def test_perf_concat_and_cast_mha_k():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, num_heads, nope_dim, rope_dim",
     )
-    bench.set_gems(flaggems_sglang.concat_and_cast_mha_k)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

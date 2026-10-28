@@ -84,5 +84,5 @@ def test_perf_state_passing():
         more_shapes=MORE_SHAPES,
         shape_desc="batch, nchunks, chunk_size, nheads, dim, has_init",
     )
-    bench.set_gems(flaggems_sglang.state_passing)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

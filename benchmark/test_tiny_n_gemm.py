@@ -48,5 +48,5 @@ def test_perf_tiny_n_gemm():
         more_shapes=MORE_SHAPES,
         shape_desc="m, n, k",
     )
-    bench.set_gems(flaggems_sglang.tiny_n_gemm)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

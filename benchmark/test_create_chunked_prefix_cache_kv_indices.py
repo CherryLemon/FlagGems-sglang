@@ -85,5 +85,5 @@ def test_perf_create_chunked_prefix_cache_kv_indices():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, chunk",
     )
-    bench.set_gems(flaggems_sglang.create_chunked_prefix_cache_kv_indices)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

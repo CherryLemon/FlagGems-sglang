@@ -48,5 +48,5 @@ def test_perf_fused_softmax_pool():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, k, head_dim",
     )
-    bench.set_gems(flaggems_sglang.fused_softmax_pool)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

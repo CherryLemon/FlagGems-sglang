@@ -57,5 +57,5 @@ def test_perf_set_token_filter():
         more_shapes=MORE_SHAPES,
         shape_desc="batch, vocab, num_tokens",
     )
-    bench.set_gems(flaggems_sglang.set_token_filter)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

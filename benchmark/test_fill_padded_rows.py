@@ -46,5 +46,5 @@ def test_perf_fill_padded_rows():
         more_shapes=MORE_SHAPES,
         shape_desc="rows, cols, mask_len",
     )
-    bench.set_gems(flaggems_sglang.fill_padded_rows)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

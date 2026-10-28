@@ -58,5 +58,5 @@ def test_perf_unpad_draft_extend_output():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, token_per_batch, num_heads, head_dim",
     )
-    bench.set_gems(flaggems_sglang.unpad_draft_extend_output)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

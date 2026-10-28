@@ -68,5 +68,5 @@ def test_perf_context_attention():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, seq_len, num_heads, head_dim",
     )
-    bench.set_gems(flaggems_sglang.context_attention)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

@@ -72,5 +72,5 @@ def test_perf_chain_speculative_sampling():
         more_shapes=MORE_SHAPES,
         shape_desc="B, S, V",
     )
-    bench.set_gems(flaggems_sglang.chain_speculative_sampling)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

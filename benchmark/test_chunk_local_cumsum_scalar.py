@@ -55,5 +55,5 @@ def test_perf_chunk_local_cumsum_scalar(reverse):
         more_shapes=MORE_SHAPES,
         shape_desc="batch, nchunks, chunk_size, nheads",
     )
-    bench.set_gems(flaggems_sglang.chunk_local_cumsum_scalar)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

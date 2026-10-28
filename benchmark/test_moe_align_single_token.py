@@ -47,5 +47,5 @@ def test_perf_moe_align_single_token():
         more_shapes=MORE_SHAPES,
         shape_desc="top_k, num_experts, block_size",
     )
-    bench.set_gems(flaggems_sglang.moe_align_single_token)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

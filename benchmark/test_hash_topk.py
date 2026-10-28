@@ -66,5 +66,5 @@ def test_perf_hash_topk():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, num_routed, topk_routed, shared",
     )
-    bench.set_gems(flaggems_sglang.hash_topk)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

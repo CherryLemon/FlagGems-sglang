@@ -58,5 +58,5 @@ def test_perf_fused_gate_sigmoid_mul_add():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, hidden",
     )
-    bench.set_gems(flaggems_sglang.fused_gate_sigmoid_mul_add)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

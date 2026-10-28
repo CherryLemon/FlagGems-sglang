@@ -49,5 +49,5 @@ def test_perf_top_p_renorm():
         more_shapes=MORE_SHAPES,
         shape_desc="batch, vocab",
     )
-    bench.set_gems(flaggems_sglang.top_p_renorm)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

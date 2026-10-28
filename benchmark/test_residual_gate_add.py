@@ -57,5 +57,5 @@ def test_perf_residual_gate_add():
         more_shapes=MORE_SHAPES,
         shape_desc="rows, hidden, broadcast",
     )
-    bench.set_gems(flaggems_sglang.residual_gate_add)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

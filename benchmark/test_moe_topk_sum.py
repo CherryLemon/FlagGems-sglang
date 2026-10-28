@@ -46,5 +46,5 @@ def test_perf_moe_topk_sum():
         more_shapes=MORE_SHAPES,
         shape_desc="m, topk, k",
     )
-    bench.set_gems(flaggems_sglang.moe_topk_sum)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

@@ -46,5 +46,5 @@ def test_perf_compute_src2dst():
         more_shapes=MORE_SHAPES,
         shape_desc="n",
     )
-    bench.set_gems(flaggems_sglang.compute_src2dst)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

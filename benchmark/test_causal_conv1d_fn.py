@@ -66,5 +66,5 @@ def test_perf_causal_conv1d_fn():
         more_shapes=MORE_SHAPES,
         shape_desc="num_seqs, seq_len, dim, width",
     )
-    bench.set_gems(flaggems_sglang.causal_conv1d_fn)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

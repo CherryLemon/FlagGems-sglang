@@ -77,5 +77,5 @@ def test_perf_chunk_scaled_dot_kkt():
         more_shapes=MORE_SHAPES,
         shape_desc="batch, nchunks, chunk_size, hg, h, k_dim, use_g",
     )
-    bench.set_gems(flaggems_sglang.chunk_scaled_dot_kkt)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

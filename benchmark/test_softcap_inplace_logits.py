@@ -56,5 +56,5 @@ def test_perf_softcap_inplace_logits():
         more_shapes=MORE_SHAPES,
         shape_desc="m, n",
     )
-    bench.set_gems(flaggems_sglang.softcap_inplace_logits)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

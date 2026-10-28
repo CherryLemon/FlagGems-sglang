@@ -55,5 +55,5 @@ def test_perf_topk_sigmoid():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, num_experts, k",
     )
-    bench.set_gems(flaggems_sglang.topk_sigmoid)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

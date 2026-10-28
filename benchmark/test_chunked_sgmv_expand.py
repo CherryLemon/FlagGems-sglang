@@ -102,5 +102,5 @@ def test_perf_chunked_sgmv_expand():
         more_shapes=MORE_SHAPES,
         shape_desc="seg_len, num_segs, num_lora, r, *slice_sizes",
     )
-    bench.set_gems(flaggems_sglang.chunked_sgmv_expand)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

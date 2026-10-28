@@ -63,5 +63,5 @@ def test_perf_set_mla_kv_buffer():
         more_shapes=MORE_SHAPES,
         shape_desc="n_loc, nope_dim, rope_dim",
     )
-    bench.set_gems(flaggems_sglang.set_mla_kv_buffer)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

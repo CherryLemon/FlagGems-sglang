@@ -20,7 +20,7 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-from .op_benchmark import OpBenchmark
+from .op_benchmark import OpBenchmark, is_case_listing
 
 # Shapes match kernel-comp-baseline/problems/moe/fused_moe_router_cudacore.
 SHAPES = [(m, 4096, 256, 8, 0.0, False) for m in (1, 8, 64, 512, 4096)]
@@ -58,9 +58,11 @@ def _input_fn(shape, cur_dtype, device):
 @pytest.mark.fused_moe_router_cudacore
 def test_perf_fused_moe_router_cudacore():
     # This op has a reference but no Triton implementation yet.
-    gems_op = flaggems_sglang.get_op("fused_moe_router_cudacore")
-    if gems_op is None:
-        pytest.skip("moe/fused_moe_router_cudacore not implemented yet")
+    gems_op = None
+    if not is_case_listing():
+        gems_op = flaggems_sglang.get_op("fused_moe_router_cudacore")
+        if gems_op is None:
+            pytest.skip("moe/fused_moe_router_cudacore not implemented yet")
     bench = OpBenchmark(
         op_name="fused_moe_router_cudacore",
         torch_op=get_reference("fused_moe_router_cudacore"),

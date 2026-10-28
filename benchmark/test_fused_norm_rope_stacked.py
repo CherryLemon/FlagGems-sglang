@@ -80,5 +80,5 @@ def test_perf_fused_norm_rope_stacked():
         more_shapes=MORE_SHAPES,
         shape_desc="t, n_layers, num_kv_heads, head_dim, rotary_dim",
     )
-    bench.set_gems(flaggems_sglang.fused_norm_rope_stacked)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

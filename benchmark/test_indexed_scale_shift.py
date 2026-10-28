@@ -54,5 +54,5 @@ def test_perf_indexed_scale_shift():
         more_shapes=MORE_SHAPES,
         shape_desc="rows, hidden, variants",
     )
-    bench.set_gems(flaggems_sglang.indexed_scale_shift)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

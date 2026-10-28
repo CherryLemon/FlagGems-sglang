@@ -87,5 +87,5 @@ def test_perf_vocab_parallel_embedding():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, hidden",
     )
-    bench.set_gems(flaggems_sglang.vocab_parallel_embedding)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

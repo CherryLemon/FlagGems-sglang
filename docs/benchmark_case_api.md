@@ -35,6 +35,12 @@ also contains the original ten `MORE_SHAPES`. Both retain the original
 builder, reference, candidate, or timer. It still imports the normal package
 and therefore requires its regular Torch/vendor runtime environment.
 
+Listing does not require a candidate export on the current backend. The
+entrypoints defer public candidate lookup via `set_gems_from_module` in
+listing mode, and existing missing-implementation skip guards bypass only
+that mode. Ordinary execution retains its original binding, errors and skips.
+This does not migrate the remaining legacy input providers to the Case API.
+
 The JSON contains the actual input shape, dtype, dimension parameters and
 seed. For example, the third core case describes `hidden_states` with shape
 `[64, 8192]`, `bs=64`, `d=4096`, and `seed=0`.

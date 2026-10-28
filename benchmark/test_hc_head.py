@@ -69,5 +69,5 @@ def test_perf_hc_head():
         more_shapes=MORE_SHAPES,
         shape_desc="t, hc_mult, hidden_size",
     )
-    bench.set_gems(flaggems_sglang.hc_head)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

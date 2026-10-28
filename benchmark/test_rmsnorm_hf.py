@@ -52,5 +52,5 @@ def test_perf_rmsnorm_hf():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, hidden",
     )
-    bench.set_gems(flaggems_sglang.rmsnorm_hf)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

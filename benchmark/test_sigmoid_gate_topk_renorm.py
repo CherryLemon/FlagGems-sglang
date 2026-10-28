@@ -57,5 +57,5 @@ def test_perf_sigmoid_gate_topk_renorm():
         more_shapes=MORE_SHAPES,
         shape_desc="m, n_routed, n_shared, k",
     )
-    bench.set_gems(flaggems_sglang.sigmoid_gate_topk_renorm)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

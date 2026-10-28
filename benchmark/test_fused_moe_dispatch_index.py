@@ -54,5 +54,5 @@ def test_perf_fused_moe_dispatch_index():
         more_shapes=MORE_SHAPES,
         shape_desc="total_tokens, topk, num_experts, hidden",
     )
-    bench.set_gems(flaggems_sglang.fused_moe_dispatch_index)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

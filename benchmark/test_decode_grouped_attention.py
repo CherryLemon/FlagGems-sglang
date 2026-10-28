@@ -80,5 +80,5 @@ def test_perf_decode_grouped_attention():
         more_shapes=MORE_SHAPES,
         shape_desc="B, H_Q, H_KV, D, seq_len",
     )
-    bench.set_gems(flaggems_sglang.decode_grouped_attention)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

@@ -62,5 +62,5 @@ def test_perf_fused_pack_qkv():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, seq, num_heads, head_dim",
     )
-    bench.set_gems(flaggems_sglang.fused_pack_qkv)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

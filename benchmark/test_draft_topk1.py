@@ -20,7 +20,7 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-from .op_benchmark import OpBenchmark
+from .op_benchmark import OpBenchmark, is_case_listing
 
 NUM_DRAFT_COLS = 4
 
@@ -62,9 +62,11 @@ def _input_fn(shape, cur_dtype, device):
 @pytest.mark.draft_topk1
 def test_perf_draft_topk1():
     # This op has a reference but no Triton implementation yet.
-    gems_op = flaggems_sglang.get_op("draft_topk1")
-    if gems_op is None:
-        pytest.skip("speculative/draft_topk1 not implemented yet")
+    gems_op = None
+    if not is_case_listing():
+        gems_op = flaggems_sglang.get_op("draft_topk1")
+        if gems_op is None:
+            pytest.skip("speculative/draft_topk1 not implemented yet")
     bench = OpBenchmark(
         op_name="draft_topk1",
         torch_op=get_reference("draft_topk1"),

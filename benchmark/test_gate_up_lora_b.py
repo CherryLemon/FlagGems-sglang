@@ -21,7 +21,7 @@ import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 from flaggems_sglang.reference._lora_batch_utils import make_batch_info
 
-from .op_benchmark import OpBenchmark
+from .op_benchmark import OpBenchmark, is_case_listing
 
 # Shapes match kernel-comp-baseline/problems/lora/gate_up_lora_b. The first
 # entry is the per-segment token count.
@@ -74,9 +74,11 @@ def _input_fn(shape, cur_dtype, device):
 @pytest.mark.gate_up_lora_b
 def test_perf_gate_up_lora_b():
     # This op has a reference but no Triton implementation yet.
-    gems_op = flaggems_sglang.get_op("gate_up_lora_b")
-    if gems_op is None:
-        pytest.skip("lora/gate_up_lora_b not implemented yet")
+    gems_op = None
+    if not is_case_listing():
+        gems_op = flaggems_sglang.get_op("gate_up_lora_b")
+        if gems_op is None:
+            pytest.skip("lora/gate_up_lora_b not implemented yet")
     bench = OpBenchmark(
         op_name="gate_up_lora_b",
         torch_op=get_reference("gate_up_lora_b"),

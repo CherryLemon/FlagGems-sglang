@@ -69,5 +69,5 @@ def test_perf_create_flashmla_kv_indices():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, max_len, page_size",
     )
-    bench.set_gems(flaggems_sglang.create_flashmla_kv_indices)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

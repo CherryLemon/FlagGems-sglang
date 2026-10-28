@@ -55,5 +55,5 @@ def test_perf_pack_topk_ids():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, topk, num_experts",
     )
-    bench.set_gems(flaggems_sglang.pack_topk_ids)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

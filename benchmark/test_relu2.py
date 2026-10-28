@@ -49,5 +49,5 @@ def test_perf_relu2():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, hidden",
     )
-    bench.set_gems(flaggems_sglang.relu2)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

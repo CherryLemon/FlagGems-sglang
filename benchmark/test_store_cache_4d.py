@@ -68,5 +68,5 @@ def test_perf_store_cache_4d():
         more_shapes=MORE_SHAPES,
         shape_desc="n, head_num, head_dim",
     )
-    bench.set_gems(flaggems_sglang.store_cache_4d)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

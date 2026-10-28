@@ -56,5 +56,5 @@ def test_perf_apply_token_bitmask():
         more_shapes=MORE_SHAPES,
         shape_desc="B, V",
     )
-    bench.set_gems(flaggems_sglang.apply_token_bitmask)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

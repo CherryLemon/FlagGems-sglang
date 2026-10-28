@@ -50,5 +50,5 @@ def test_perf_softcap_out():
         more_shapes=MORE_SHAPES,
         shape_desc="m, n",
     )
-    bench.set_gems(flaggems_sglang.softcap_out)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

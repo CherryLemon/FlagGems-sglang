@@ -48,5 +48,5 @@ def test_perf_seqlens_expand():
         more_shapes=MORE_SHAPES,
         shape_desc="n",
     )
-    bench.set_gems(flaggems_sglang.seqlens_expand)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

@@ -34,6 +34,11 @@ from .attri_util import BenchLevel
 from .performance_utils import GenericBenchmark
 
 
+def is_case_listing() -> bool:
+    config = conftest.Config
+    return config is not None and config.list_cases
+
+
 class OpBenchmark(GenericBenchmark):
     """:class:`GenericBenchmark` with shapes supplied by the caller.
 
@@ -64,6 +69,17 @@ class OpBenchmark(GenericBenchmark):
         # Shapes are merged by set_shapes above. The generic 1D/2D/3D shapes
         # GenericBenchmark would add here don't fit these operators.
         return None
+
+    def set_gems_from_module(self, module) -> None:
+        """Bind the public candidate except during tensor-free listing.
+
+        Catalogs describe workloads even when this backend does not export
+        the candidate. Execution keeps the original eager attribute lookup
+        and fails explicitly for a missing export.
+        """
+        if is_case_listing():
+            return
+        self.set_gems(getattr(module, self.op_name))
 
 
 def _is_comprehensive() -> bool:

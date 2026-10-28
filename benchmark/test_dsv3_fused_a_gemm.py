@@ -65,5 +65,5 @@ def test_perf_dsv3_fused_a_gemm():
         more_shapes=MORE_SHAPES,
         shape_desc="m, d, num_experts, top_k",
     )
-    bench.set_gems(flaggems_sglang.dsv3_fused_a_gemm)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

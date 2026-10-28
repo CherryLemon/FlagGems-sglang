@@ -79,5 +79,5 @@ def test_perf_chunked_embedding_lora_a():
         more_shapes=MORE_SHAPES,
         shape_desc="seg_len, num_segs, num_lora, r, vocab_size",
     )
-    bench.set_gems(flaggems_sglang.chunked_embedding_lora_a)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

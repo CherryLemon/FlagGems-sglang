@@ -61,5 +61,5 @@ def test_perf_fill_bonus_tokens():
         more_shapes=MORE_SHAPES,
         shape_desc="batch, accept_stride",
     )
-    bench.set_gems(flaggems_sglang.fill_bonus_tokens)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()
