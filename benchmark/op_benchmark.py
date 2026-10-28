@@ -29,6 +29,8 @@ re-syncable.
 
 from typing import Any, Iterable, Optional, Sequence
 
+from flaggems_sglang.reference_candidate import reference_mode_enabled
+
 from . import conftest
 from .attri_util import BenchLevel
 from .performance_utils import GenericBenchmark
@@ -77,7 +79,7 @@ class OpBenchmark(GenericBenchmark):
         the candidate. Execution keeps the original eager attribute lookup
         and fails explicitly for a missing export.
         """
-        if is_case_listing():
+        if is_case_listing() or reference_mode_enabled():
             return
         self.set_gems(getattr(module, self.op_name))
 

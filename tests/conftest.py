@@ -214,6 +214,8 @@ def pytest_runtest_logreport(report):
     result = TEST_RESULTS.setdefault(
         report.nodeid, {"params": None, "result": None, "opname": None}
     )
+    if hasattr(report, "reference_candidate"):
+        result.update(report.reference_candidate)
     if report.when == "setup":
         if report.outcome == "skipped":
             reason = get_reason(report)

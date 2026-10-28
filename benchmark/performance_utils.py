@@ -26,6 +26,12 @@ import triton
 import yaml  # type: ignore[import-untyped]
 
 import flaggems_sglang
+from flaggems_sglang.reference_candidate import (
+    ReferenceContractError,
+    reference_execution,
+    reference_mode_enabled,
+    select_candidate,
+)
 
 from .attri_util import (
     BOOL_DTYPES,
@@ -196,6 +202,7 @@ class Benchmark:
         self.torch_op = torch_op
         self.gems_op = None
         self.is_backward = is_backward
+        self._validate_reference_candidate()
         self.is_inplace = is_inplace
         self._input_iter = None
 
@@ -398,6 +405,41 @@ class Benchmark:
         if os.path.isfile(vendor_shape_file):
             Config.shape_file = vendor_shape_file
         self.set_shapes(Config.shape_file)
+
+    def _validate_reference_candidate(self):
+        if not reference_mode_enabled():
+            return
+        if not callable(self.torch_op):
+            raise ReferenceContractError(
+                f"Operator '{self.op_name}': No predefined reference; "
+                "--ref-as-candidate requires an explicitly defined callable "
+                "torch_op."
+            )
+        if self.is_backward:
+            raise ReferenceContractError(
+                f"Operator '{self.op_name}': --ref-as-candidate does not "
+                "support is_backward=True; forward reference invocation "
+                "does not prove execution of the backward timer."
+            )
+        methods = (
+            "run",
+            "_measure_input",
+            "get_latency",
+            "_candidate_call",
+            "_run_cases",
+            "_run_legacy",
+            "_benchmark_callable",
+            "_time_callable",
+        )
+        if any(
+            getattr(getattr(self, name), "__func__", None)
+            is not getattr(Benchmark, name)
+            for name in methods
+        ):
+            raise ReferenceContractError(
+                f"Operator '{self.op_name}': custom benchmark execution "
+                "does not expose the --ref-as-candidate reference contract."
+            )
 
     def set_gems(self, gems_op):
         self.gems_op = gems_op
@@ -627,10 +669,20 @@ class Benchmark:
                 )
             if "latency" in self.to_bench_metrics:
                 candidate, dispatch, _ = self._candidate_call()
+                execution = reference_execution()
+                before = execution.candidate_calls if execution else 0
                 with dispatch:
                     metric.latency = self.get_latency(
                         candidate, *args, **kwargs
                     )
+                if reference_mode_enabled():
+                    if execution.candidate_calls <= before:
+                        raise ReferenceContractError(
+                            f"{case_id or self.op_name}: reference candidate "
+                            "timer did not invoke the declared reference."
+                        )
+                    execution.completed_timings += 1
+                    metric.candidate_source = "reference"
             if "speedup" in self.to_bench_metrics:
                 metric.speedup = metric.latency_base / metric.latency
             if (
@@ -710,6 +762,11 @@ class Benchmark:
     def _run_cases(self, case_ids: Optional[Collection[str]]):
         cases = self._collect_cases()
         available_ids = [case.case_id for case in cases]
+        if reference_mode_enabled():
+            reference_execution().benchmark_selection_empty = (
+                case_ids is not None
+                and not set(case_ids).intersection(available_ids)
+            )
 
         select_all = case_ids is None
         selected = set(case_ids or [])
@@ -750,6 +807,12 @@ class Benchmark:
         an override, preserve the original set_gems-or-reference selection,
         including the historical fallback for falsey callable bindings.
         """
+        if reference_mode_enabled():
+            return (
+                select_candidate(self.gems_op, self.torch_op, self.op_name),
+                nullcontext(),
+                False,
+            )
         registry = getattr(Config, "override_registry", None)
         override = (
             registry.get_override(self.op_name)
@@ -966,6 +1029,11 @@ class Benchmark:
             return
 
         self.init_user_config()
+        self._validate_reference_candidate()
+        if reference_mode_enabled() and "latency" not in self.to_bench_metrics:
+            raise ReferenceContractError(
+                "--ref-as-candidate requires the candidate latency metric."
+            )
         configured_case_ids = getattr(Config, "case_ids", None)
         selection_requested = (
             case_ids is not None or configured_case_ids is not None
