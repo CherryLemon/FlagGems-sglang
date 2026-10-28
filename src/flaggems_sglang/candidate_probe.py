@@ -20,6 +20,7 @@ benchmark tests. It never supplies tensor outputs or measures a latency.
 
 import json
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -89,6 +90,8 @@ class CandidateProbe:
         self.records = {}
         self.collection_errors = []
         self.active = None
+        self.observed = None
+        self.observation_stage = "session"
         self.signals = {}
         self.benchmark_nodes = set()
         self.available_case_ids = set()
@@ -106,6 +109,8 @@ class CandidateProbe:
                 "nodeid": nodeid,
                 "status": "NOT_RUN",
                 "calls": 0,
+                "before_candidate_calls": 0,
+                "unexpected_calls": 0,
             }
             if case_id is not None:
                 self.records[key]["case_id"] = case_id
@@ -116,7 +121,44 @@ class CandidateProbe:
         if self.active is not None:
             self.records[self.active]["calls"] += 1
             self.signals[self.active] = signal
+        else:
+            key = self.observed
+            if key is None:
+                key, _ = self._record("<session>", "session")
+            elif key not in self.records:
+                # Successful benchmark traversal removes its node placeholder.
+                # Later calls in that pytest item still need a node record.
+                key, _ = self._record(key[1], key[0])
+            record = self.records[key]
+            record["unexpected_calls"] += 1
+            if not record["calls"]:
+                record["before_candidate_calls"] += 1
+            if not self._failed(record):
+                status = (
+                    "PYTEST_LIFECYCLE_ERROR"
+                    if self.observation_stage in {"setup", "teardown"}
+                    else (
+                        "POST_CALL_ERROR"
+                        if record["calls"]
+                        else "PRE_CALL_ERROR"
+                    )
+                )
+                self._error(record, signal, status)
+                record["message"] = (
+                    "Dummy candidate invoked during "
+                    f"{self.observation_stage}, "
+                    "outside the formal candidate call."
+                )
         raise signal
+
+    @contextmanager
+    def _observe(self, key, stage):
+        previous = self.observed, self.observation_stage
+        self.observed, self.observation_stage = key, stage
+        try:
+            yield
+        finally:
+            self.observed, self.observation_stage = previous
 
     def _is_signal(self, key, exc):
         return (
@@ -179,14 +221,27 @@ class CandidateProbe:
             self.collection_errors.append(str(report.longrepr)[-2000:])
 
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
-    def pytest_runtest_call(self, item):
-        if self._phase(item) == "accuracy":
-            key, _ = self._record(item.nodeid, "accuracy")
-            self.active = key
-        try:
+    def pytest_runtest_setup(self, item):
+        key, _ = self._record(item.nodeid, self._phase(item))
+        with self._observe(key, "setup"):
             yield
-        finally:
-            self.active = None
+
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
+    def pytest_runtest_call(self, item):
+        key, _ = self._record(item.nodeid, self._phase(item))
+        if self._phase(item) == "accuracy":
+            self.active = key
+        with self._observe(key, "call"):
+            try:
+                yield
+            finally:
+                self.active = None
+
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
+    def pytest_runtest_teardown(self, item):
+        key, _ = self._record(item.nodeid, self._phase(item))
+        with self._observe(key, "teardown"):
+            yield
 
     @pytest.hookimpl(hookwrapper=True, trylast=True)
     def pytest_runtest_makereport(self, item, call):
@@ -270,6 +325,13 @@ class CandidateProbe:
         """Traverse real inputs one case at a time without entering timers."""
         from benchmark.conftest import Config
 
+        key, _ = self._record(Config.current_nodeid, "benchmark")
+        with self._observe(key, "benchmark preparation"):
+            return self._run_benchmark(benchmark, case_ids)
+
+    def _run_benchmark(self, benchmark, case_ids):
+        from benchmark.conftest import Config
+
         nodeid = Config.current_nodeid
         self.benchmark_nodes.add(nodeid)
         nodekey, node = self._record(nodeid, "benchmark")
@@ -312,13 +374,24 @@ class CandidateProbe:
                 )
                 continue
             key, record = self._record(nodeid, "benchmark", case.case_id)
+            previous = self.observed, self.observation_stage
+            self.observed, self.observation_stage = (
+                key,
+                "benchmark case preparation",
+            )
             try:
                 args, kwargs = benchmark.unpack_to_args_kwargs(
                     benchmark.build_inputs(case)
                 )
+                if self._failed(record):
+                    continue
                 candidate, dispatch, overridden = benchmark._candidate_call()
                 record["override"] = overridden
+                if self._failed(record):
+                    continue
                 with dispatch:
+                    if self._failed(record):
+                        continue
                     # Only the runner's actual candidate call can prove a hit.
                     # Public-op calls in builders/resolvers are errors.
                     self.active = key
@@ -327,14 +400,16 @@ class CandidateProbe:
                     finally:
                         self.active = None
             except pytest.skip.Exception as exc:
-                if record["calls"]:
+                if self._failed(record):
+                    pass
+                elif record["calls"]:
                     record.update(
                         status="SENTINEL_SWALLOWED", sentinel_observed=False
                     )
                 else:
                     record.update(status="SKIP", reason=str(exc))
             except DummyReached as exc:
-                if self._is_signal(key, exc):
+                if self._is_signal(key, exc) and not self._failed(record):
                     record.update(status="REACHED", sentinel_observed=True)
                 else:
                     self._error(
@@ -353,14 +428,18 @@ class CandidateProbe:
                     "POST_CALL_ERROR" if record["calls"] else "PRE_CALL_ERROR",
                 )
             else:
-                record.update(
-                    status=(
-                        "SENTINEL_SWALLOWED" if record["calls"] else "BYPASSED"
-                    ),
-                    sentinel_observed=False,
-                )
+                if not self._failed(record):
+                    record.update(
+                        status=(
+                            "SENTINEL_SWALLOWED"
+                            if record["calls"]
+                            else "BYPASSED"
+                        ),
+                        sentinel_observed=False,
+                    )
             finally:
                 self.active = None
+                self.observed, self.observation_stage = previous
                 # Exceptions retain their call frames, including input tensors.
                 self.signals.pop(key, None)
             if record["status"] in {"REACHED", "SKIP"}:

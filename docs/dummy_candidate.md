@@ -33,6 +33,11 @@ and records keyed by correctness `nodeid` or benchmark `case_id`. Statuses inclu
 `REACHED`, `BYPASSED`, `PRE_CALL_ERROR`, `POST_CALL_ERROR`,
 `SENTINEL_SWALLOWED`, `PYTEST_LIFECYCLE_ERROR`, `NOT_RUN`, `SKIP` and
 `UNSUPPORTED`. Swallowing the signal or converting it to a skip does not pass.
+`calls` counts invocations in the candidate execution context. Benchmark input
+builders and candidate resolution cannot supply formal hits; pytest fixture calls
+are also unexpected. These calls remain errors even if their signal is caught.
+`unexpected_calls` and `before_candidate_calls` retain that evidence separately
+from candidate hits.
 Empty selection, all skips, missing invocations, collection/lifecycle errors and
 unknown case IDs return a nonzero exit code. Partial capability skips remain
 explicit records; at least one actual hit is required for success.

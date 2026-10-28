@@ -58,7 +58,7 @@ def _benchmark(
     *,
     legacy=False,
     build_error=False,
-    builder_hits_dummy=False,
+    builder_hits_dummy=None,
     skip_after_run=False,
 ):
     provider = """
@@ -69,6 +69,22 @@ def _benchmark(
     """
     if legacy:
         provider = "input_fn=lambda shape, dtype, device: [(shape[0],)],"
+    builder_probe = ""
+    if builder_hits_dummy:
+        builder_probe = "    if n == 1:\n        import flaggems_sglang\n"
+        if builder_hits_dummy == "unhandled":
+            builder_probe += "        flaggems_sglang.dummy_probe(n)\n"
+        else:
+            builder_probe += (
+                "        try:\n"
+                "            flaggems_sglang.dummy_probe(n)\n"
+                "        except RuntimeError:\n"
+            )
+            builder_probe += (
+                "            pytest.skip('builder converted dummy into skip')\n"
+                if builder_hits_dummy == "caught_then_skip"
+                else "            pass\n"
+            )
     path = pytester.path / "benchmark" / "test_dummy_probe.py"
     path.write_text(
         "import json\n"
@@ -85,12 +101,7 @@ def _benchmark(
         "    n = plan.builder_args[0][0]\n"
         "    with Path('built.jsonl').open('a') as output:\n"
         "        output.write(json.dumps(n) + '\\n')\n"
-        + (
-            "    import flaggems_sglang\n"
-            "    flaggems_sglang.dummy_probe(n)\n"
-            if builder_hits_dummy
-            else ""
-        )
+        + builder_probe
         + (
             "    if n == 2: raise ValueError('input construction failed')\n"
             if build_error
@@ -236,6 +247,42 @@ def lifecycle():
         else "PRE_CALL_ERROR"
     )
     assert [row["status"] for row in data["records"]] == [expected]
+
+
+def test_fixture_cannot_hide_a_dummy_call_by_catching_and_skipping(
+    pytester, dummy_project
+):
+    path = _accuracy(
+        pytester,
+        """
+        import pytest
+        import flaggems_sglang
+
+        @pytest.fixture(autouse=True)
+        def setup_probe(value):
+            if value == 0:
+                try:
+                    flaggems_sglang.dummy_probe(value)
+                except RuntimeError:
+                    pytest.skip('fixture converted dummy call into skip')
+
+        @pytest.mark.parametrize('value', [0, 1], ids=['first', 'second'])
+        def test_candidate(value):
+            flaggems_sglang.dummy_probe(value)
+        """,
+    )
+    result, data = _run(pytester, path)
+    assert result.ret != 0
+    assert data["status"] == "FAILED"
+    records = {row["nodeid"]: row for row in data["records"]}
+    assert len(records) == 2
+    first = records[path + "::test_candidate[first]"]
+    assert first["status"] == "PYTEST_LIFECYCLE_ERROR"
+    assert first["calls"] == 0
+    assert first["before_candidate_calls"] == 1
+    second = records[path + "::test_candidate[second]"]
+    assert second["status"] == "REACHED"
+    assert second["calls"] == 1
 
 
 @pytest.mark.parametrize("after_hit", ["swallowed", "skip", "other_error"])
@@ -384,18 +431,23 @@ def test_benchmark_body_cannot_skip_after_reaching_the_candidate(
     }
 
 
+@pytest.mark.parametrize(
+    "handling", ["unhandled", "caught_then_skip", "caught_then_return"]
+)
 def test_input_builder_calls_do_not_count_as_formal_candidate_invocation(
-    pytester, dummy_project
+    pytester, dummy_project, handling
 ):
-    path = _benchmark(pytester, builder_hits_dummy=True)
+    path = _benchmark(pytester, builder_hits_dummy=handling)
     result, data = _run(pytester, path, options=("--level=core",))
     assert result.ret != 0
     assert data["status"] == "FAILED"
     assert len(data["records"]) == 2
-    assert all(
-        row["status"] == "PRE_CALL_ERROR" and row["calls"] == 0
-        for row in data["records"]
-    )
+    first, second = data["records"]
+    assert first["status"] == "PRE_CALL_ERROR"
+    assert first["calls"] == 0
+    assert first["before_candidate_calls"] == 1
+    assert second["status"] == "REACHED"
+    assert second["calls"] == 1
 
 
 def test_benchmark_selection_replays_exactly_one_case_and_rejects_unknown_ids(
