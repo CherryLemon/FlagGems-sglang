@@ -62,5 +62,5 @@ def test_perf_pad_draft_extend_query():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, max_seq_len, num_heads, head_dim",
     )
-    bench.set_gems(flaggems_sglang.pad_draft_extend_query)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

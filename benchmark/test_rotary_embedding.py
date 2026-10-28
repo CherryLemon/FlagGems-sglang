@@ -52,5 +52,5 @@ def test_perf_rotary_embedding():
         more_shapes=MORE_SHAPES,
         shape_desc="tokens, heads, head_size",
     )
-    bench.set_gems(flaggems_sglang.rotary_embedding)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

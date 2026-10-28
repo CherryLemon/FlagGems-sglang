@@ -74,5 +74,5 @@ def test_perf_sgemm_lora_a():
         more_shapes=MORE_SHAPES,
         shape_desc="seg_lens, num_lora, r, k, stack_num, permutation",
     )
-    bench.set_gems(flaggems_sglang.sgemm_lora_a)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

@@ -130,5 +130,5 @@ def test_perf_extend_attention():
         more_shapes=MORE_SHAPES,
         shape_desc="B, n_ctx, H_Q, H_KV, D",
     )
-    bench.set_gems(flaggems_sglang.extend_attention)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

@@ -62,5 +62,5 @@ def test_perf_act_and_mul():
         more_shapes=MORE_SHAPES,
         shape_desc="m, half_hidden, activation, swiglu_limit",
     )
-    bench.set_gems(flaggems_sglang.act_and_mul)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

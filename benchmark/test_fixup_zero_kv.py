@@ -60,5 +60,5 @@ def test_perf_fixup_zero_kv():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, num_heads, v_head_dim, max_q",
     )
-    bench.set_gems(flaggems_sglang.fixup_zero_kv)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

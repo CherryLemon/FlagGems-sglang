@@ -52,5 +52,5 @@ def test_perf_dcp_lse_combine():
         more_shapes=MORE_SHAPES,
         shape_desc="n, b, h, d",
     )
-    bench.set_gems(flaggems_sglang.dcp_lse_combine)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

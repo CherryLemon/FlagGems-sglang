@@ -54,5 +54,5 @@ def test_perf_log_scaling_tau():
         more_shapes=MORE_SHAPES,
         shape_desc="t, heads, d",
     )
-    bench.set_gems(flaggems_sglang.log_scaling_tau)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

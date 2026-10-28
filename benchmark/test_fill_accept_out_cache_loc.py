@@ -55,5 +55,5 @@ def test_perf_fill_accept_out_cache_loc():
         more_shapes=MORE_SHAPES,
         shape_desc="size",
     )
-    bench.set_gems(flaggems_sglang.fill_accept_out_cache_loc)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

@@ -85,5 +85,5 @@ def test_perf_qkv_lora_b():
         more_shapes=MORE_SHAPES,
         shape_desc="seg_lens, num_lora, r, dq, dkv",
     )
-    bench.set_gems(flaggems_sglang.qkv_lora_b)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

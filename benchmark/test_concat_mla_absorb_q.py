@@ -50,5 +50,5 @@ def test_perf_concat_mla_absorb_q():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, num_heads, a_last, b_last",
     )
-    bench.set_gems(flaggems_sglang.concat_mla_absorb_q)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

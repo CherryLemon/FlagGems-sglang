@@ -81,5 +81,5 @@ def test_perf_gather_spec_extras():
         more_shapes=MORE_SHAPES,
         shape_desc="m, hidden",
     )
-    bench.set_gems(flaggems_sglang.gather_spec_extras)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

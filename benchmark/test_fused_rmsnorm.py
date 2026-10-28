@@ -52,5 +52,5 @@ def test_perf_fused_rmsnorm():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, hidden",
     )
-    bench.set_gems(flaggems_sglang.fused_rmsnorm)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

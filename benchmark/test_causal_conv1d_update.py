@@ -71,5 +71,5 @@ def test_perf_causal_conv1d_update():
         more_shapes=MORE_SHAPES,
         shape_desc="batch, dim, width, seqlen",
     )
-    bench.set_gems(flaggems_sglang.causal_conv1d_update)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

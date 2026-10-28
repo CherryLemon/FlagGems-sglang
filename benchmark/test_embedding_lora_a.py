@@ -90,5 +90,5 @@ def test_perf_embedding_lora_a():
         more_shapes=MORE_SHAPES,
         shape_desc="seg_lens, num_lora, r, vocab_size, num_extra",
     )
-    bench.set_gems(flaggems_sglang.embedding_lora_a)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

@@ -55,5 +55,5 @@ def test_perf_recompute_w_u():
         more_shapes=MORE_SHAPES,
         shape_desc="b, t, h, hg, k_dim, v_dim, bt",
     )
-    bench.set_gems(flaggems_sglang.recompute_w_u)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

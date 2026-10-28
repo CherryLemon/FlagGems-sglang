@@ -77,5 +77,5 @@ def test_perf_conv_window_scatter_with_mask():
         more_shapes=MORE_SHAPES,
         shape_desc="layers, cache, requests, draft, dim, k",
     )
-    bench.set_gems(flaggems_sglang.conv_window_scatter_with_mask)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

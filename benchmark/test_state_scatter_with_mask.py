@@ -64,5 +64,5 @@ def test_perf_state_scatter_with_mask():
         more_shapes=MORE_SHAPES,
         shape_desc="layers, cache, requests, draft, state0, state1",
     )
-    bench.set_gems(flaggems_sglang.state_scatter_with_mask)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

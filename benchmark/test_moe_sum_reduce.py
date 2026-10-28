@@ -49,5 +49,5 @@ def test_perf_moe_sum_reduce():
         more_shapes=MORE_SHAPES,
         shape_desc="T, top_k, H",
     )
-    bench.set_gems(flaggems_sglang.moe_sum_reduce)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

@@ -53,5 +53,5 @@ def test_perf_group_norm_silu():
         more_shapes=MORE_SHAPES,
         shape_desc="n, c, spatial, num_groups",
     )
-    bench.set_gems(flaggems_sglang.group_norm_silu)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

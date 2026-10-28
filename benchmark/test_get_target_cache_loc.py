@@ -73,5 +73,5 @@ def test_perf_get_target_cache_loc():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, num_verify_tokens",
     )
-    bench.set_gems(flaggems_sglang.get_target_cache_loc)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

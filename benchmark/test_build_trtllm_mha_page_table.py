@@ -55,5 +55,5 @@ def test_perf_build_trtllm_mha_page_table():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, block_size, max_len",
     )
-    bench.set_gems(flaggems_sglang.build_trtllm_mha_page_table)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

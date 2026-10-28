@@ -20,7 +20,7 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
-from .op_benchmark import OpBenchmark
+from .op_benchmark import OpBenchmark, is_case_listing
 
 # Shapes match kernel-comp-baseline/problems/rope/interleaved_rope. The last
 # entry is the mrope section split.
@@ -45,9 +45,11 @@ def _input_fn(shape, cur_dtype, device):
 @pytest.mark.interleaved_rope
 def test_perf_interleaved_rope():
     # This op has a reference but no Triton implementation yet.
-    gems_op = flaggems_sglang.get_op("interleaved_rope")
-    if gems_op is None:
-        pytest.skip("rope/interleaved_rope not implemented yet")
+    gems_op = None
+    if not is_case_listing():
+        gems_op = flaggems_sglang.get_op("interleaved_rope")
+        if gems_op is None:
+            pytest.skip("rope/interleaved_rope not implemented yet")
     bench = OpBenchmark(
         op_name="interleaved_rope",
         torch_op=get_reference("interleaved_rope"),

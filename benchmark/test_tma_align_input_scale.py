@@ -48,5 +48,5 @@ def test_perf_tma_align_input_scale():
         more_shapes=MORE_SHAPES,
         shape_desc="m, k_div_block",
     )
-    bench.set_gems(flaggems_sglang.tma_align_input_scale)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

@@ -65,5 +65,5 @@ def test_perf_zero_experts_identity():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, top_k, hidden, num_experts",
     )
-    bench.set_gems(flaggems_sglang.zero_experts_identity)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

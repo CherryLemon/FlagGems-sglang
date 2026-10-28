@@ -51,5 +51,5 @@ def test_perf_deepep_permute():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, topk, hidden",
     )
-    bench.set_gems(flaggems_sglang.deepep_permute)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

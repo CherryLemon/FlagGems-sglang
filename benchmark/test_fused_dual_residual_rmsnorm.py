@@ -59,5 +59,5 @@ def test_perf_fused_dual_residual_rmsnorm():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, hidden",
     )
-    bench.set_gems(flaggems_sglang.fused_dual_residual_rmsnorm)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

@@ -62,5 +62,5 @@ def test_perf_chunk_cumsum():
         more_shapes=MORE_SHAPES,
         shape_desc="batch, nchunks, chunk_size, nheads",
     )
-    bench.set_gems(flaggems_sglang.chunk_cumsum)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

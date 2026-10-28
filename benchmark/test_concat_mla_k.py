@@ -58,5 +58,5 @@ def test_perf_concat_mla_k():
         more_shapes=MORE_SHAPES,
         shape_desc="total_tokens, num_heads, head_dim, kv_lora_rank",
     )
-    bench.set_gems(flaggems_sglang.concat_mla_k)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

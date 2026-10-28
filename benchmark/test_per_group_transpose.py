@@ -57,5 +57,5 @@ def test_perf_per_group_transpose():
         shapes=SHAPES,
         shape_desc="k, rows_per_expert",
     )
-    bench.set_gems(flaggems_sglang.per_group_transpose)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

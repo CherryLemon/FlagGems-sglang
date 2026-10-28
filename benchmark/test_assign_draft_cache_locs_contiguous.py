@@ -72,5 +72,5 @@ def test_perf_assign_draft_cache_locs_contiguous():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, topk, steps",
     )
-    bench.set_gems(flaggems_sglang.assign_draft_cache_locs_contiguous)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

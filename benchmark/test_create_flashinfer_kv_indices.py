@@ -61,5 +61,5 @@ def test_perf_create_flashinfer_kv_indices():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, page_size, max_len",
     )
-    bench.set_gems(flaggems_sglang.create_flashinfer_kv_indices)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

@@ -86,5 +86,5 @@ def test_perf_ernie45_rope_fused():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, n_qh, n_kh, head_size, rotary_dim",
     )
-    bench.set_gems(flaggems_sglang.ernie45_rope_fused)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

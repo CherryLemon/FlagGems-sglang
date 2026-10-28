@@ -61,5 +61,5 @@ def test_perf_mamba_layernorm_gated():
         more_shapes=MORE_SHAPES,
         shape_desc="m, n, group_size",
     )
-    bench.set_gems(flaggems_sglang.mamba_layernorm_gated)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

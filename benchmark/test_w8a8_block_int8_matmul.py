@@ -80,5 +80,5 @@ def test_perf_w8a8_block_int8_matmul():
         more_shapes=MORE_SHAPES,
         shape_desc="m, n, k",
     )
-    bench.set_gems(flaggems_sglang.w8a8_block_int8_matmul)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

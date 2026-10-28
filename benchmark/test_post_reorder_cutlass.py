@@ -78,5 +78,5 @@ def test_perf_post_reorder_cutlass():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, topk, hidden, num_local_experts",
     )
-    bench.set_gems(flaggems_sglang.post_reorder_cutlass)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

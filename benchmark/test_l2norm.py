@@ -47,5 +47,5 @@ def test_perf_l2norm():
         more_shapes=MORE_SHAPES,
         shape_desc="t, d",
     )
-    bench.set_gems(flaggems_sglang.l2norm)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

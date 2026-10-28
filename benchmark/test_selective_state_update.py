@@ -120,5 +120,5 @@ def test_perf_selective_state_update():
             "has_z, has_d, has_dt_bias, dt_softplus"
         ),
     )
-    bench.set_gems(flaggems_sglang.selective_state_update)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

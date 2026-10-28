@@ -46,5 +46,5 @@ def test_perf_clamp_position():
         more_shapes=MORE_SHAPES,
         shape_desc="bs",
     )
-    bench.set_gems(flaggems_sglang.clamp_position)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

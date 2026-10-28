@@ -61,5 +61,5 @@ def test_perf_fused_qkvzba_split_reshape_cat():
         more_shapes=MORE_SHAPES,
         shape_desc="batch, num_heads_qk, num_heads_v, head_qk, head_v",
     )
-    bench.set_gems(flaggems_sglang.fused_qkvzba_split_reshape_cat)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

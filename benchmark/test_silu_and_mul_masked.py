@@ -58,5 +58,5 @@ def test_perf_silu_and_mul_masked():
         more_shapes=MORE_SHAPES,
         shape_desc="expert_num, token_num_padded, hidden_dim, masked_m",
     )
-    bench.set_gems(flaggems_sglang.silu_and_mul_masked)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

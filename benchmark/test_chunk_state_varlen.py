@@ -106,5 +106,5 @@ def test_perf_chunk_state_varlen():
         more_shapes=MORE_SHAPES,
         shape_desc="seq_lens, chunk_size, nheads, ngroups, headdim, dstate",
     )
-    bench.set_gems(flaggems_sglang.chunk_state_varlen)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

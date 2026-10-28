@@ -51,5 +51,5 @@ def test_perf_deepep_post_reorder():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, topk, hidden, scaling",
     )
-    bench.set_gems(flaggems_sglang.deepep_post_reorder)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

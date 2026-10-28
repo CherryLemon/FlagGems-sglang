@@ -79,5 +79,5 @@ def test_perf_moe_align_block_size():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, top_k, num_experts, block_size",
     )
-    bench.set_gems(flaggems_sglang.moe_align_block_size)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

@@ -60,5 +60,5 @@ def test_perf_silu_and_mul():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, d",
     )
-    bench.set_gems(flaggems_sglang.silu_and_mul)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

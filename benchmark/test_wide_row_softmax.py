@@ -49,5 +49,5 @@ def test_perf_wide_row_softmax():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, vocab",
     )
-    bench.set_gems(flaggems_sglang.wide_row_softmax)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

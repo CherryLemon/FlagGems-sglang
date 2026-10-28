@@ -51,5 +51,5 @@ def test_perf_fused_sigmoid_mul():
         more_shapes=MORE_SHAPES,
         shape_desc="num_tokens, num_heads, head_dim",
     )
-    bench.set_gems(flaggems_sglang.fused_sigmoid_mul)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

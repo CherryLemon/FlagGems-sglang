@@ -51,5 +51,5 @@ def test_perf_sigmoid_gate_mul():
         more_shapes=MORE_SHAPES,
         shape_desc="bs, hidden",
     )
-    bench.set_gems(flaggems_sglang.sigmoid_gate_mul)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()

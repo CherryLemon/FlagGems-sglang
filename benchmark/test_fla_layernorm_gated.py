@@ -70,5 +70,5 @@ def test_perf_fla_layernorm_gated():
         more_shapes=MORE_SHAPES,
         shape_desc="t, d, activation, is_rms_norm, has_bias",
     )
-    bench.set_gems(flaggems_sglang.fla_layernorm_gated)
+    bench.set_gems_from_module(flaggems_sglang)
     bench.run()
