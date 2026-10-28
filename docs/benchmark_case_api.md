@@ -17,16 +17,17 @@ limitations under the License.
 # List and replay benchmark cases
 
 The existing `flaggems.benchmark-case-list/v2` API separates a lightweight
-case plan from Tensor construction. `silu_and_mul` is the first operator in
-this repository connected to this API. Other benchmarks using only the
-legacy `input_fn` still run normally, but do not support case listing or
-exact selection until they provide a planner and builder.
+case plan from Tensor construction. All 125 operator benchmarks in this
+repository provide a planner and builder, including both `reverse` variants
+of the two local cumsum benchmarks.
 
 ## List cases
 
 ```shell
 pytest -q benchmark/test_silu_and_mul.py --level core --list-cases --output /tmp/silu-core.json
 pytest -q benchmark/test_silu_and_mul.py --list-cases --output /tmp/silu-comprehensive.json
+pytest -q benchmark --level core --list-cases --output /tmp/all-core.json
+pytest -q benchmark --list-cases --output /tmp/all-comprehensive.json
 ```
 
 Core contains the original five `SHAPES`; the default comprehensive level
@@ -45,6 +46,15 @@ The JSON contains the actual input shape, dtype, dimension parameters and
 seed. For example, the third core case describes `hidden_states` with shape
 `[64, 8192]`, `bs=64`, `d=4096`, and `seed=0`.
 
+The newly migrated providers retain the original `SHAPES` entry in
+`params.configuration`, alongside named dimensions, option values, seeds and
+fixed module configuration. Optional Tensor inputs are described as `null`
+when absent; nested LoRA routing tensors use dotted names such as
+`batch_info.seg_indptr`. Dimensions determined by Tensor values are strings,
+for example `["sum(seq_lens)"]`, rather than fabricated numeric sizes.
+The builder resolves these dimensions using the unchanged original input
+generator, only after selection.
+
 ## Replay a selected case
 
 Use the exact ID from the catalog and the same level and source revision:
@@ -60,6 +70,9 @@ outer pytest parametrization therefore gets separate node-scoped IDs.
 These IDs are not content hashes. Preserve the source revision, invocation,
 and actual outer parameter values with a catalog before using it as an
 acceptance artifact; changing source or case order can change its meaning.
+Exact replay selects the workload configuration. It does not reseed global
+RNGs or save input values. `mrope_fused` retains its original global Torch
+RNG, and shuffled LoRA permutations also retain their original global RNG.
 
 Listing rejects empty providers and duplicate IDs within a provider or across
 the session's published benchmark lists. A listing session that publishes no
@@ -78,6 +91,13 @@ Use the existing `GenericBenchmark`/`OpBenchmark` arguments:
   are not serialized into the public catalog.
 - Keep the original shapes, their order, dtypes, seeds and reference/candidate
   bindings. Do not mix the planner/builder pair with `input_fn`.
+
+For a legacy generator that yields exactly once per shape, reuse
+`single_input_builder(_input_fn)` from `benchmark.cases` as `build_inputs_fn`
+and set the planner's `builder_args=(shape,)`. This adapter calls the original
+generator only for selected cases and rejects zero or multiple yields. Bind
+any outer pytest arguments to both the planner and the generator; record
+those arguments in `params` as the cumsum benchmarks do.
 
 The `silu_and_mul` migration preserves the original seeded float32 generation
 followed by conversion to bfloat16. Default benchmark invocation still runs

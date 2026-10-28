@@ -20,6 +20,7 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
+from .cases import BenchmarkCasePlan, single_input_builder
 from .op_benchmark import OpBenchmark, is_case_listing
 
 NUM_DRAFT_COLS = 4
@@ -59,6 +60,29 @@ def _input_fn(shape, cur_dtype, device):
     yield next_token_logits, positions, draft_tokens, draft_token_column
 
 
+def _case_fn(shape, cur_dtype):
+    (bs, vocab_size, with_draft_tokens, draft_token_column) = shape
+    yield BenchmarkCasePlan(
+        shape={
+            "next_token_logits": (bs, vocab_size),
+            "positions": (bs,),
+            "draft_tokens": (
+                (bs, NUM_DRAFT_COLS) if with_draft_tokens else None
+            ),
+        },
+        params={
+            "configuration": shape,
+            "seed": 0,
+            "NUM_DRAFT_COLS": NUM_DRAFT_COLS,
+            "bs": bs,
+            "vocab_size": vocab_size,
+            "with_draft_tokens": with_draft_tokens,
+            "draft_token_column": draft_token_column,
+        },
+        builder_args=(shape,),
+    )
+
+
 @pytest.mark.draft_topk1
 def test_perf_draft_topk1():
     # This op has a reference but no Triton implementation yet.
@@ -70,7 +94,8 @@ def test_perf_draft_topk1():
     bench = OpBenchmark(
         op_name="draft_topk1",
         torch_op=get_reference("draft_topk1"),
-        input_fn=_input_fn,
+        case_fn=_case_fn,
+        build_inputs_fn=single_input_builder(_input_fn),
         dtypes=[torch.float32],
         shapes=SHAPES,
         more_shapes=MORE_SHAPES,
