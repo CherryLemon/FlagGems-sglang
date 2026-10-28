@@ -30,17 +30,16 @@ pytest -q benchmark --level core --list-cases --output /tmp/all-core.json
 pytest -q benchmark --list-cases --output /tmp/all-comprehensive.json
 ```
 
-Core contains the original five `SHAPES`; the default comprehensive level
-also contains the original ten `MORE_SHAPES`. Both retain the original
-`torch.bfloat16` dtype. Listing calls the case planner but not the Tensor
-builder, reference, candidate, or timer. It still imports the normal package
-and therefore requires its regular Torch/vendor runtime environment.
+For `silu_and_mul`, core contains the original five `SHAPES`; the default
+comprehensive level also contains the original ten `MORE_SHAPES`. Both retain
+the original `torch.bfloat16` dtype. Listing calls the case planner but not
+the Tensor builder, reference, candidate, or timer. It still imports the normal
+package and therefore requires its regular Torch/vendor runtime environment.
 
 Listing does not require a candidate export on the current backend. The
 entrypoints defer public candidate lookup via `set_gems_from_module` in
 listing mode, and existing missing-implementation skip guards bypass only
 that mode. Ordinary execution retains its original binding, errors and skips.
-This does not migrate the remaining legacy input providers to the Case API.
 
 The JSON contains the actual input shape, dtype, dimension parameters and
 seed. For example, the third core case describes `hidden_states` with shape
@@ -99,7 +98,7 @@ generator only for selected cases and rejects zero or multiple yields. Bind
 any outer pytest arguments to both the planner and the generator; record
 those arguments in `params` as the cumsum benchmarks do.
 
-The `silu_and_mul` migration preserves the original seeded float32 generation
-followed by conversion to bfloat16. Default benchmark invocation still runs
-all the same core or comprehensive workloads; this change adds case IDs to
-their timing records without changing the timed operator.
+The migrations preserve the original input generators, including seeded
+float32 generation followed by conversion where used. Default benchmark
+invocation still runs the same core or comprehensive workloads; this change
+adds case IDs to their timing records without changing the timed operator.

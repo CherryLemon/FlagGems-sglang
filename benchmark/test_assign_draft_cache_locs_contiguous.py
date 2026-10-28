@@ -66,7 +66,7 @@ def _case_fn(shape, cur_dtype):
     (bs, topk, steps) = shape
     yield BenchmarkCasePlan(
         shape={
-            "req_pool_indices": (bs,),
+            "req_pool_indices": (min(bs, _MAX_BATCH),),
             "req_to_token": (_MAX_BATCH, _POOL_LEN),
             "seq_lens": (bs,),
             "out_cache_loc": (bs * topk * steps,),

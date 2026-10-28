@@ -83,6 +83,23 @@ def test_single_input_builder_preserves_original_errors():
     assert caught.value is error
 
 
+@pytest.mark.parametrize("batch", [512, 2048])
+def test_pool_slice_catalog_reports_the_original_actual_input_shape(batch):
+    from benchmark import test_assign_draft_cache_locs_contiguous as module
+
+    shape = (batch, 8, 5)
+    (plan,) = module._case_fn(shape, torch.bfloat16)
+    inputs = single_input_builder(module._input_fn)(
+        plan, torch.bfloat16, "cpu"
+    )
+    assert plan.params["configuration"] == shape
+    assert tuple(inputs[0].shape) == plan.shape["req_pool_indices"]
+    assert inputs[0].numel() == module._MAX_BATCH
+    # The original generator retains full batch-sized lengths/output slots.
+    assert tuple(inputs[2].shape) == plan.shape["seq_lens"] == (batch,)
+    assert tuple(inputs[3].shape) == plan.shape["out_cache_loc"]
+
+
 @pytest.mark.parametrize("operator", OPERATORS)
 @pytest.mark.parametrize("level", [BenchLevel.CORE, BenchLevel.COMPREHENSIVE])
 def test_every_provider_lists_original_grid_and_materializes_only_selection(
