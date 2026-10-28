@@ -229,6 +229,8 @@ def pytest_runtest_logreport(report):
 
 
 def pytest_terminal_summary(terminalreporter):
+    if getattr(terminalreporter.config, "_dummy_probe", None) is not None:
+        return
     data = TEST_RESULTS
     with open(REPORT_FILE, "a+") as json_file:
         fcntl.flock(json_file, fcntl.LOCK_EX)

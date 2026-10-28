@@ -246,6 +246,22 @@ def add_override_arguments(parser) -> None:
         action="store_true",
         help="List all active operator overrides and exit",
     )
+    group.addoption(
+        "--dummy-candidate",
+        metavar="OP",
+        help=(
+            "Check per-case invocation of a built-in dummy candidate "
+            "(no numeric or timing result)."
+        ),
+    )
+    group.addoption(
+        "--dummy-report",
+        metavar="PATH",
+        help=(
+            "Dummy invocation JSON report "
+            "(default: dummy-candidate-report.json)."
+        ),
+    )
     parser._flaggems_sglang_override_arguments = True
 
 
@@ -261,6 +277,13 @@ def configure_overrides(config) -> DynamicOpOverride:
     # unconfigure hooks also use cleanup_overrides, which is idempotent.
     config.add_cleanup(lambda: cleanup_overrides(config))
     try:
+        # Do not import/register the probe in ordinary test sessions.
+        if getattr(config.option, "dummy_candidate", None) or getattr(
+            config.option, "dummy_report", None
+        ):
+            from .candidate_probe import configure_dummy_candidate
+
+            configure_dummy_candidate(config, registry)
         return apply_overrides_from_args(config.option, registry=registry)
     except BaseException:
         # Failed setup must restore any earlier successful overrides without
