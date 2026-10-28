@@ -617,13 +617,10 @@ class Benchmark:
                     self.torch_op, *args, **kwargs
                 )
             if "latency" in self.to_bench_metrics:
-                if self.gems_op:
+                candidate, dispatch, _ = self._candidate_call()
+                with dispatch:
                     metric.latency = self.get_latency(
-                        self.gems_op, *args, **kwargs
-                    )
-                else:
-                    metric.latency = self.get_latency(
-                        self.torch_op, *args, **kwargs
+                        candidate, *args, **kwargs
                     )
             if "speedup" in self.to_bench_metrics:
                 metric.speedup = metric.latency_base / metric.latency
@@ -738,13 +735,11 @@ class Benchmark:
         return results
 
     def _candidate_call(self):
-        """Resolve the callable timed as the candidate for the
-        candidate-only modes (preflight / profile).
+        """Resolve one candidate path for timing, preflight and profiling.
 
-        This repo dispatches to the Gems implementation through an explicit
-        ``gems_op`` rather than a ``use_gems()`` context, so dispatch is a
-        no-op context manager here. When a dynamic override registry is
-        active (see flaggems_sglang.cli_override) its live candidate wins.
+        A live override wins over a previously bound implementation. Without
+        an override, preserve explicit set_gems, then resolve the public op
+        lazily by name before the legacy reference fallback.
         """
         registry = getattr(Config, "override_registry", None)
         override = (
@@ -752,9 +747,13 @@ class Benchmark:
             if registry is not None
             else None
         )
-        op = (
-            override if override is not None else self.gems_op or self.torch_op
-        )
+        op = override
+        if op is None:
+            op = self.gems_op
+        if op is None:
+            op = getattr(flaggems_sglang, self.op_name, None)
+        if op is None:
+            op = self.torch_op
         return op, nullcontext(), override is not None
 
     def _run_preflight_cases(self, case_ids: Optional[Collection[str]]):

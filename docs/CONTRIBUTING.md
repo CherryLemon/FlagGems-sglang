@@ -206,7 +206,6 @@ Every new op also gets a perf benchmark at `benchmark/test_my_op.py`. Mirror
 import pytest
 import torch
 
-import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
 from .op_benchmark import OpBenchmark
@@ -231,7 +230,6 @@ def test_perf_my_op():
         more_shapes=MORE_SHAPES,
         shape_desc="M, N",
     )
-    bench.set_gems(flaggems_sglang.my_op)
     bench.run()
 ```
 
@@ -239,8 +237,13 @@ An op normally needs no benchmark class of its own: `OpBenchmark` (a thin
 `GenericBenchmark` subclass) drives everything, and the op only supplies
 `input_fn`. It is called once per shape and yields the input tuples for that
 shape. Each tuple is unpacked into the positional arguments of both `torch_op`
-(the pure-torch reference, used as the speedup baseline) and the kernel
-registered via `set_gems`, so the two must accept the same signature.
+(the pure-torch reference, used as the speedup baseline) and the candidate,
+so the two must accept the same signature. At execution time the runner
+first resolves a live override by `op_name`, then an explicit `set_gems`
+binding, then `flaggems_sglang.<op_name>`. The original reference remains
+the fallback when no implementation is available. Avoid eager public
+attribute lookup when constructing a benchmark: a candidate can be injected
+even before that operator has a public implementation.
 `Benchmark.run` handles warmup, timing, and the
 `Operator: ... Performance Test` report table.
 
@@ -262,6 +265,29 @@ pytest -q benchmark/test_my_op.py --level core --iter 1 --warmup 1
 ```
 
 Correctness assertions live in `tests/`, not here; a benchmark only measures.
+
+### Inject a candidate in correctness tests and benchmarks
+
+Both suites accept the same candidate file without modifying the test:
+
+```shell
+pytest -q tests/test_my_op.py --override my_op:/absolute/path/candidate.py:run
+pytest -q benchmark/test_my_op.py --level core --override my_op:/absolute/path/candidate.py:run
+```
+
+`--override-config` also accepts a YAML/JSON mapping for several operators.
+A mixed `tests/` + `benchmark/` pytest session shares one registry; candidates
+are loaded once and original attributes are restored when the session ends.
+An override loaded from a file must be called at least once or cleanup fails.
+This session-wide check does not establish per-case candidate coverage.
+
+Ordinary timing, candidate-only preflight, and profiling resolve the same
+candidate. Preflight/profile still require a benchmark with a case provider;
+adding an override does not migrate a legacy `input_fn` benchmark to that API.
+The original `torch_op` baseline is not replaced by the candidate override.
+`--reference-only` remains a separate baseline-readiness mode, incompatible
+with candidate overrides, and does not run a reference through the candidate
+path.
 
 ---
 
