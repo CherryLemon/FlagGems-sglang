@@ -42,7 +42,7 @@ def _validate_options(options):
     for name, value in options.items():
         if type(value) is not int or value <= 0:
             raise ValueError(f"invalid positive integer launch option: {name}")
-        if name != "num_stages" and value & (value - 1):
+        if name not in {"num_stages", "GROUP_SIZE_M"} and value & (value - 1):
             raise ValueError(f"launch option must be a power of two: {name}")
     return options
 

@@ -84,3 +84,9 @@ def test_moe_tuning_cannot_change_existing_routing_alignment(
             )
     finally:
         _tuning._load.cache_clear()
+
+
+def test_group_count_can_be_a_non_power_of_two():
+    assert _tuning._validate_options({"GROUP_SIZE_M": 3}) == {
+        "GROUP_SIZE_M": 3
+    }
