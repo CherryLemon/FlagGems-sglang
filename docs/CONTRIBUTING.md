@@ -206,6 +206,7 @@ Every new op also gets a perf benchmark at `benchmark/test_my_op.py`. Mirror
 import pytest
 import torch
 
+import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
 from .op_benchmark import OpBenchmark
@@ -230,6 +231,7 @@ def test_perf_my_op():
         more_shapes=MORE_SHAPES,
         shape_desc="M, N",
     )
+    bench.set_gems(flaggems_sglang.my_op)
     bench.run()
 ```
 
@@ -239,11 +241,11 @@ An op normally needs no benchmark class of its own: `OpBenchmark` (a thin
 shape. Each tuple is unpacked into the positional arguments of both `torch_op`
 (the pure-torch reference, used as the speedup baseline) and the candidate,
 so the two must accept the same signature. At execution time the runner
-first resolves a live override by `op_name`, then an explicit `set_gems`
-binding, then `flaggems_sglang.<op_name>`. The original reference remains
-the fallback when no implementation is available. Avoid eager public
-attribute lookup when constructing a benchmark: a candidate can be injected
-even before that operator has a public implementation.
+first resolves a live override by `op_name`. Without an override it retains
+the original `set_gems` binding, or the `torch_op` fallback when that binding
+is falsey. It does not implicitly select a same-named public operator.
+For override-only benchmarks, `set_gems` may be omitted: the injected
+candidate is resolved by name without requiring an existing public export.
 `Benchmark.run` handles warmup, timing, and the
 `Operator: ... Performance Test` report table.
 

@@ -738,8 +738,8 @@ class Benchmark:
         """Resolve one candidate path for timing, preflight and profiling.
 
         A live override wins over a previously bound implementation. Without
-        an override, preserve explicit set_gems, then resolve the public op
-        lazily by name before the legacy reference fallback.
+        an override, preserve the original set_gems-or-reference selection,
+        including the historical fallback for falsey callable bindings.
         """
         registry = getattr(Config, "override_registry", None)
         override = (
@@ -747,13 +747,9 @@ class Benchmark:
             if registry is not None
             else None
         )
-        op = override
-        if op is None:
-            op = self.gems_op
-        if op is None:
-            op = getattr(flaggems_sglang, self.op_name, None)
-        if op is None:
-            op = self.torch_op
+        op = (
+            override if override is not None else self.gems_op or self.torch_op
+        )
         return op, nullcontext(), override is not None
 
     def _run_preflight_cases(self, case_ids: Optional[Collection[str]]):

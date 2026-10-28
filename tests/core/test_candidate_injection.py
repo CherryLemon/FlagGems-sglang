@@ -55,11 +55,45 @@ def test_candidate_resolution_precedence(monkeypatch, source):
             actual = candidate(0)
         assert (
             actual
-            == {"override": 4, "binding": 3, "public": 2, "reference": 1}[
+            == {"override": 4, "binding": 3, "public": 1, "reference": 1}[
                 source
             ]
         )
         assert injected == (source == "override")
+    finally:
+        registry.restore_all()
+
+
+def test_no_override_preserves_falsey_binding_fallback(monkeypatch):
+    from types import SimpleNamespace
+
+    from benchmark import performance_utils as base
+    from flaggems_sglang.dynamic_registry import DynamicOpOverride
+
+    class FalseyCandidate:
+        def __bool__(self):
+            return False
+
+        def __call__(self, value):
+            return value + 4
+
+    registry = DynamicOpOverride()
+    monkeypatch.setattr(
+        base, "Config", SimpleNamespace(override_registry=registry)
+    )
+    bench = base.Benchmark("_falsey_probe", torch_op=lambda value: value + 1)
+    binding = FalseyCandidate()
+    bench.set_gems(binding)
+    candidate, _, injected = bench._candidate_call()
+    assert candidate(0) == 1
+    assert not injected
+
+    registry.override(bench.op_name, binding)
+    try:
+        candidate, _, injected = bench._candidate_call()
+        assert candidate is binding
+        assert candidate(0) == 4
+        assert injected
     finally:
         registry.restore_all()
 
@@ -84,7 +118,8 @@ def injection_project(pytester):
             (directory / path.name).symlink_to(path)
 
     observed = pytester.path / "calls.jsonl"
-    candidate = pytester.makepyfile(candidate=f"""
+    candidate = pytester.makepyfile(
+        candidate=f"""
         import json
         from pathlib import Path
 
@@ -92,7 +127,8 @@ def injection_project(pytester):
             with Path({str(observed)!r}).open("a") as output:
                 output.write(json.dumps(list(x.shape)) + "\\n")
             return x + 7
-        """)
+        """
+    )
     return candidate, observed
 
 
