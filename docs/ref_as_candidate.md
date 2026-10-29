@@ -18,8 +18,10 @@ pytest -q benchmark/test_silu_and_mul.py -m silu_and_mul --level core \
 
 ## Declare a correctness reference
 
-The initial migrated operator is `silu_and_mul`. Other correctness tests continue
-to run normally without the option. To opt in, decorate a parametrized factory:
+All 125 operator correctness tests declare their references through this
+contract, including the in-place softcap and tuple-output mrope tests. Existing
+parameter grids, reference dispatch, comparison tolerances and candidate skips
+are retained. To add another test, decorate a parametrized factory:
 
 ```python
 from flaggems_sglang.reference_candidate import ReferenceCase, reference_test

@@ -20,6 +20,7 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 from flaggems_sglang.reference._lora_batch_utils import make_batch_info
+from flaggems_sglang.reference_candidate import ReferenceCase, reference_test
 
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
@@ -140,6 +141,7 @@ CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.chunked_sgmv_expand
+@reference_test
 def test_chunked_sgmv_expand(case_idx):
     # Build only this case; a module-level list would allocate
     # every case's tensors at import time.
@@ -153,32 +155,38 @@ def test_chunked_sgmv_expand(case_idx):
     kwargs = case if isinstance(case, dict) else {}
 
     # Reference
-    expected = reference(**kwargs)
+    def invoke_reference(inputs):
+        return reference(**inputs)
 
-    # Operator under test
-    try:
-        from flaggems_sglang import chunked_sgmv_expand
-    except (ImportError, ModuleNotFoundError):
-        pytest.skip("lora/chunked_sgmv_expand ops module not found")
-        return
+    def invoke_candidate(inputs):
+        try:
+            from flaggems_sglang import chunked_sgmv_expand
+        except (ImportError, ModuleNotFoundError):
+            pytest.skip("lora/chunked_sgmv_expand ops module not found")
+        try:
+            return chunked_sgmv_expand(**inputs)
+        except NotImplementedError:
+            pytest.skip("lora/chunked_sgmv_expand not yet implemented")
 
-    try:
-        actual = chunked_sgmv_expand(**kwargs)
-    except NotImplementedError:
-        pytest.skip("lora/chunked_sgmv_expand not yet implemented")
-        return
+    def compare(actual, expected):
+        # Compare
+        if check is not None:
+            check(actual, expected)
+        elif isinstance(expected, torch.Tensor):
+            assert_close(actual, expected)
+        elif isinstance(expected, (tuple, list)):
+            for a, e in zip(actual, expected):
+                if a is None and e is None:
+                    continue
+                if isinstance(e, torch.Tensor):
+                    assert_close(a, e)
+        # Restore check for reuse
+        if check is not None:
+            case["check"] = check
 
-    # Compare
-    if check is not None:
-        check(actual, expected)
-    elif isinstance(expected, torch.Tensor):
-        assert_close(actual, expected)
-    elif isinstance(expected, (tuple, list)):
-        for a, e in zip(actual, expected):
-            if a is None and e is None:
-                continue
-            if isinstance(e, torch.Tensor):
-                assert_close(a, e)
-    # Restore check for reuse
-    if check is not None:
-        case["check"] = check
+    return ReferenceCase(
+        inputs=kwargs,
+        candidate=invoke_candidate,
+        reference=invoke_reference,
+        compare=compare,
+    )

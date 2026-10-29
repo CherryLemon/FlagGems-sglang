@@ -17,6 +17,7 @@ import pytest
 import torch
 
 from flaggems_sglang.reference import get_reference
+from flaggems_sglang.reference_candidate import ReferenceCase, reference_test
 
 from . import conftest as cfg
 
@@ -105,6 +106,7 @@ CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.deepep_permute
+@reference_test
 def test_deepep_permute(case_idx):
     # Build only this case; a module-level list would allocate
     # every case's tensors at import time.
@@ -118,30 +120,36 @@ def test_deepep_permute(case_idx):
     kwargs = case if isinstance(case, dict) else {}
 
     # Reference
-    expected = reference(**kwargs)
+    def invoke_reference(inputs):
+        return reference(**inputs)
 
-    # Operator under test
-    try:
-        from flaggems_sglang import deepep_permute
-    except (ImportError, ModuleNotFoundError):
-        pytest.skip("moe/deepep_permute ops module not found")
-        return
+    def invoke_candidate(inputs):
+        try:
+            from flaggems_sglang import deepep_permute
+        except (ImportError, ModuleNotFoundError):
+            pytest.skip("moe/deepep_permute ops module not found")
+        try:
+            return deepep_permute(**inputs)
+        except NotImplementedError:
+            pytest.skip("moe/deepep_permute not yet implemented")
 
-    try:
-        actual = deepep_permute(**kwargs)
-    except NotImplementedError:
-        pytest.skip("moe/deepep_permute not yet implemented")
-        return
+    def compare(actual, expected):
+        # Compare
+        if check is not None:
+            check(actual, expected)
+        elif isinstance(expected, torch.Tensor):
+            assert_close(actual, expected)
+        elif isinstance(expected, (tuple, list)):
+            for a, e in zip(actual, expected):
+                if isinstance(e, torch.Tensor):
+                    assert_close(a, e)
+        # Restore check for reuse
+        if check is not None:
+            case["check"] = check
 
-    # Compare
-    if check is not None:
-        check(actual, expected)
-    elif isinstance(expected, torch.Tensor):
-        assert_close(actual, expected)
-    elif isinstance(expected, (tuple, list)):
-        for a, e in zip(actual, expected):
-            if isinstance(e, torch.Tensor):
-                assert_close(a, e)
-    # Restore check for reuse
-    if check is not None:
-        case["check"] = check
+    return ReferenceCase(
+        inputs=kwargs,
+        candidate=invoke_candidate,
+        reference=invoke_reference,
+        compare=compare,
+    )
