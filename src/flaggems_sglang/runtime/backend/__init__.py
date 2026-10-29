@@ -65,25 +65,36 @@ class BackendArchEvent:
             return
         arch_map = vendor_module.ARCH_MAP
         arch_string = os.environ.get("ARCH", "")
-        arch_string_num = (
-            arch_string.split("_")[-1][0] if arch_string else arch_string
-        )
-        if not arch_string_num:
+        # Candidate keys ordered from the most to the least specific. The
+        # last one is the major version alone, so a map that lists whole
+        # families keeps matching the same devices it did before.
+        keys = []
+        if arch_string:
+            keys.append(arch_string.split("_")[-1][0])
+        else:
             try:
                 if not torch_device_object.is_available():
                     return False
                 props = torch_device_object.get_device_properties(device)
-                arch_string_num = str(props.major)
+                # AMD reports the exact target here, sometimes with feature
+                # suffixes such as "gfx942:sramecc+:xnack-". CUDA builds of
+                # torch return the device name, which matches no key.
+                gcn_arch = (getattr(props, "gcnArchName", "") or "").strip()
+                if gcn_arch:
+                    keys.append(gcn_arch.split(":")[0])
+                keys.append(f"{props.major}.{props.minor}")
+                keys.append(str(props.major))
             except Exception:
                 self.has_arch = False
-        if arch_string_num not in arch_map:
-            print(
-                f"[INFO] : FlagGems Unsupported "
-                f"GPU arch {arch_string} specialization"
-            )
-        else:
-            self.has_arch = True
-            return arch_map[arch_string_num]
+
+        for key in keys:
+            if key in arch_map:
+                self.has_arch = True
+                return arch_map[key]
+        print(
+            "[INFO] : FlagGems Unsupported GPU arch "
+            f"{arch_string or (keys[0] if keys else 'unknown')} specialization"
+        )
 
     def _get_supported_archs(self, path=None):
         path = path or vendor_module.__path__[0]
@@ -105,7 +116,11 @@ class BackendArchEvent:
         return list(self.supported_archs.keys())
 
     def get_arch_module(self):
-        """Load backend.<arch>"""
+        """Load backend._<vendor>.<arch>"""
+        # Import package-qualified under the vendor module rather than placing
+        # the arch directory on sys.path and importing the bare "<arch>" name,
+        # which would collide in sys.modules with another backend's arch module
+        # of the same name (e.g. two vendors both shipping a "hopper").
         current_arch_module = importlib.import_module(
             f"{vendor_module.__name__}.{self.arch}"
         )
@@ -114,16 +129,13 @@ class BackendArchEvent:
     def get_arch_ops(self):
         arch_specialized_ops = []
         modules = []
-        ops_module = importlib.import_module(
-            f"{self.arch_module.__name__}.ops"
-        )
         try:
             ops_module = self.arch_module.ops
             modules.append(ops_module)
         except Exception:
             try:
                 ops_module = importlib.import_module(
-                    f"{self.arch_module.__name__}.ops"
+                    f"{vendor_module.__name__}.{self.arch}.ops"
                 )
                 modules.append(ops_module)
             except Exception as err_msg:
@@ -231,8 +243,12 @@ fn = torch.{device_name}
 
 def get_vendor_module(vendor_name, query=False):
     def get_module(vendor_name):
-        # Resolve inside this distribution. Bare _nvidia/hopper names collide
-        # with FlagGems when both libraries are imported in the same process.
+        # Import package-qualified (flaggems_sglang.runtime.backend._<vendor>)
+        # instead of putting this directory on sys.path and importing the bare
+        # name. A bare "_<vendor>" key in sys.modules collides with FlagGems'
+        # identically named backend module, so whichever package imported first
+        # wins the slot and the other silently reuses it (see the _iluvatar /
+        # _metax heuristics_config_utils import failures).
         return importlib.import_module(f"{__name__}.{vendor_name}")
 
     if query:

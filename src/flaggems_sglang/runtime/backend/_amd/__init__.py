@@ -21,6 +21,25 @@ vendor_info = VendorDescriptor(
     triton_extra_name="hip",
 )
 
+"""
+Mapping from an AMD GPU architecture to the directory holding that
+architecture's specialized operators.
+
+Keys are looked up from the most to the least specific: the exact target
+torch reports in gcnArchName, then "major.minor", then the major version
+alone. An architecture absent from the map falls back to the vendor-wide
+and generic operators.
+
+Targets are listed individually because the major version alone is too
+coarse: every gfx11 target reports major 11, from discrete RDNA3 GPUs to
+the RDNA3.5 APUs, and gfx1250 reports major 12 like RDNA4 although it is a
+separate family. The rdna3 operators are tuned and tested on gfx1100 only.
+"""
+
+ARCH_MAP = {
+    "gfx1100": "rdna3",
+}
+
 CUSTOMIZED_UNUSED_OPS = ()
 
 __all__ = ["*"]

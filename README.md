@@ -36,7 +36,7 @@ import flaggems_sglang
 x = torch.randn(1024, device='cuda')
 
 # Apply ReLU activation
-y = flaggems_sglang.ops.relu(x)
+y = flaggems_sglang.relu(x)
 ```
 
 ## Tests and Benchmark Quick Start
@@ -63,6 +63,8 @@ pytest -q benchmark/test_silu_and_mul.py --level core --iter 1 --warmup 1
 
 - Most tests/benchmarks require a CUDA-capable GPU runtime.
 - `--collect-only` is recommended first to quickly check import and discovery.
+- All operator benchmarks support tensor-free case listing and exact replay;
+  see [the case API guide](docs/benchmark_case_api.md).
 
 The [DeepSeek V4.1 H100 adapter](docs/dsv41-h100-operators.md)
 keeps SGLang request/candidate FP4 fusion here and calls FlagGems for

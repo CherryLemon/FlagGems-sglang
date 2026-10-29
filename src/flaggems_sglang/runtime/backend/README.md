@@ -77,7 +77,7 @@ Copy `_nvidia/__init__.py` as a starting point. The **only change**
 required is the `VendorDescriptor` construction:
 
 ```python
-from backend_utils import VendorDescriptor
+from ..backend_utils import VendorDescriptor
 
 vendor_info = VendorDescriptor(
     vendor_name="xxx",
@@ -108,12 +108,16 @@ vendor_info = VendorDescriptor(
 ##### Arch mapping (optional)
 
 If you ship arch-specific specializations, define `ARCH_MAP` at the
-bottom of `_<vendor>/__init__.py`. Keys are the arch discriminator
-strings returned by your device query (major compute capability, arch
-family, etc.); values are subfolder names. Example from `_nvidia`:
+bottom of `_<vendor>/__init__.py`. Values are subfolder names. Keys are
+tried from the most to the least specific: the exact target the device
+reports in `gcnArchName` (AMD only, with feature suffixes such as
+`:sramecc+:xnack-` removed), then `"major.minor"`, then the major version
+alone. `_nvidia` maps whole families by major version, `_amd` lists exact
+targets:
 
 ```python
-ARCH_MAP = {"9": "hopper", "8": "ampere"}
+ARCH_MAP = {"9": "hopper", "8": "ampere"}  # _nvidia
+ARCH_MAP = {"gfx1100": "rdna3"}  # _amd
 ```
 
 The resolver will look up the current device's arch, use `ARCH_MAP` to
