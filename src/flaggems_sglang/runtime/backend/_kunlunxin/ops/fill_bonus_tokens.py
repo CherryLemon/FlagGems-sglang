@@ -114,6 +114,7 @@ _RAW_GATHER8_SOURCE = (
     "}\n"
 )
 
+
 def _raw_gather(src, lens, out, n, stride, base, block):
     pass
 
@@ -130,7 +131,9 @@ HAS_RAW = raw_gather is not None and raw_gather8 is not None
 if HAS_RAW:
 
     @triton.jit
-    def _raw(src, lens, out, N: tl.constexpr, S: tl.constexpr, B: tl.constexpr):
+    def _raw(
+        src, lens, out, N: tl.constexpr, S: tl.constexpr, B: tl.constexpr
+    ):
         tle.raw.call(
             raw_gather,
             (
@@ -145,7 +148,9 @@ if HAS_RAW:
         )
 
     @triton.jit
-    def _raw8(src, lens, out, N: tl.constexpr, S: tl.constexpr, B: tl.constexpr):
+    def _raw8(
+        src, lens, out, N: tl.constexpr, S: tl.constexpr, B: tl.constexpr
+    ):
         tle.raw.call(
             raw_gather8,
             (
