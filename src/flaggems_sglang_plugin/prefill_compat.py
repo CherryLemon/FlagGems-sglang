@@ -6,13 +6,11 @@
 import torch
 import triton
 import triton.language as tl
+from flag_gems.fused.dsv41.fp4_prefill import dense_fp8_index_logits
 
 from flaggems_sglang.runtime.backend._nvidia.hopper.ops.dsv41_fp8_prefill_candidates import (
     candidate_prefill_score,
     supports_candidate_prefill,
-)
-from flaggems_sglang_plugin.compat.dsv41.fp4_prefill import (
-    dense_fp8_index_logits,
 )
 
 INDEX_HEAD_DIM = 128

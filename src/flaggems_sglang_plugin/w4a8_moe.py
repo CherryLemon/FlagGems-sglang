@@ -362,14 +362,14 @@ def install():
             != MATH_PINS[fn.__name__]
         ):
             raise RuntimeError("Unreviewed native quant math: " + fn.__name__)
-    from flaggems_sglang_plugin.compat.dsv41.masked_row_quant import (
+    from flag_gems.fused.dsv41.masked_row_quant import (
         MASKED_ROW_QUANT_ABI,
         masked_row_quant,
     )
 
     if MASKED_ROW_QUANT_ABI != 1:
         raise RuntimeError("Incompatible FlagGems masked row quant ABI")
-    from flaggems_sglang_plugin.compat.dsv41.masked_swiglu import masked_swiglu
+    from flag_gems.fused.dsv41.masked_swiglu import masked_swiglu
 
     activation_module = importlib.import_module(
         "sglang.kernels.ops.moe.fused_moe_triton_kernels"

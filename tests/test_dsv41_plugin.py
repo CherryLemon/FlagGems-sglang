@@ -220,7 +220,7 @@ def mock_reviewed_install(monkeypatch, tmp_path, plugin, *, abi=1):
     for module in [config, core, mhc, matmul]:
         monkeypatch.setitem(sys.modules, module.__name__, module)
     packages["flag_gems.fused.dsv41"].mhc = mhc
-    casts = types.ModuleType("isolated_dsv41_plugin.compat.dsv41.fp4_prefill")
+    casts = types.ModuleType("flag_gems.fused.dsv41.fp4_prefill")
     for name in groups[0][3:5]:
         fn = native("optimized " + name)
         setattr(casts, name, fn)
@@ -241,6 +241,7 @@ def mock_reviewed_install(monkeypatch, tmp_path, plugin, *, abi=1):
         monkeypatch.setitem(sys.modules, name, module)
     for module in [casts, release_mhc, prefill]:
         monkeypatch.setitem(sys.modules, module.__name__, module)
+    packages["flag_gems.fused.dsv41"].fp4_prefill = casts
     alias = types.ModuleType("sglang.test_aliases")
     for name, fn in originals.items():
         setattr(alias, name, fn)
