@@ -33,6 +33,14 @@ def fresh():
     return module
 
 
+def server_args(model_type="deepseek_v41"):
+    return types.SimpleNamespace(
+        get_model_config=lambda: types.SimpleNamespace(
+            hf_config=types.SimpleNamespace(model_type=model_type)
+        )
+    )
+
+
 def test_discovery_without_scheduler_does_not_import_gpu_or_sglang(
     monkeypatch,
 ):
@@ -62,7 +70,7 @@ def test_device_is_set_before_operator_install(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     monkeypatch.setattr(p, "install", lambda: events.append("install"))
     p.load_plugin()
-    assert scheduler.configure_scheduler_process(None, 5) == 3
+    assert scheduler.configure_scheduler_process(server_args(), 5) == 3
     assert events == ["configure", ("device", 5), "install"]
     wrapped = scheduler.configure_scheduler_process
     p.load_plugin()
@@ -108,8 +116,21 @@ def test_other_platforms_keep_native_scheduler(
 
     monkeypatch.setattr(p, "install", unexpected)
     p.load_plugin()
-    assert scheduler.configure_scheduler_process(None, 2) == "native"
+    assert scheduler.configure_scheduler_process(server_args(), 2) == "native"
     assert devices == ([2] if available else [])
+
+
+@pytest.mark.parametrize("args", [None, server_args("llama")])
+def test_other_models_keep_native_scheduler(monkeypatch, args):
+    p = fresh()
+    scheduler = types.ModuleType("sglang.srt.managers.scheduler")
+    scheduler.configure_scheduler_process = lambda *a, **k: "native"
+    monkeypatch.setitem(sys.modules, scheduler.__name__, scheduler)
+    monkeypatch.setattr(
+        p, "install", lambda: pytest.fail("unrelated model installed DSV4.1")
+    )
+    p.load_plugin()
+    assert scheduler.configure_scheduler_process(args, 2) == "native"
 
 
 def test_unknown_source_fails_before_any_rebind(monkeypatch, tmp_path):
@@ -228,7 +249,9 @@ def mock_reviewed_install(monkeypatch, tmp_path, plugin, *, abi=1):
     release_mhc = types.ModuleType("isolated_dsv41_plugin.compat.dsv41.mhc")
     release_mhc.hc_mix_stats_sinkhorn = native("optimized sinkhorn")
     replacements["hc_mix_stats_sinkhorn"] = release_mhc.hc_mix_stats_sinkhorn
-    prefill = types.ModuleType("isolated_dsv41_plugin.prefill_compat")
+    prefill = types.ModuleType(
+        "flaggems_sglang.runtime.backend._nvidia.hopper.ops._dsv41_fp8_prefill"
+    )
     prefill.fp8_index_logits_prefill = native("optimized prefill")
     replacements["fp8_index_logits_prefill"] = prefill.fp8_index_logits_prefill
     for name in [

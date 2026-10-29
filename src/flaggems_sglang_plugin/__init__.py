@@ -127,8 +127,11 @@ def install():
     # Install every public cast/prefill entry as well as decode before Graph.
     from flag_gems.fused.dsv41 import fp4_prefill
 
+    from flaggems_sglang.runtime.backend._nvidia.hopper.ops._dsv41_fp8_prefill import (
+        fp8_index_logits_prefill,
+    )
+
     from .compat.dsv41 import mhc as release_mhc
-    from .prefill_compat import fp8_index_logits_prefill
 
     for name in [
         "quantize_bf16_index_queries_fp8",
@@ -212,6 +215,16 @@ def load_plugin():
     @functools.wraps(_configure_original)
     def configure(*args, **kwargs):
         result = _configure_original(*args, **kwargs)
+        server_args = kwargs.get("server_args", args[0] if args else None)
+        get_model_config = getattr(server_args, "get_model_config", None)
+        if not callable(get_model_config):
+            return result
+        model_config = get_model_config()
+        if (
+            getattr(model_config.hf_config, "model_type", None)
+            != "deepseek_v41"
+        ):
+            return result
         import torch
 
         if not torch.cuda.is_available():

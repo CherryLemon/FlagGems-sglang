@@ -12,10 +12,12 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.mark.parametrize("rows,heads", [(1, 32), (17, 8)])
 def test_candidate_score_small_shapes_use_general_kernel(rows, heads):
+    from flaggems_sglang.runtime.backend._nvidia.hopper.ops._dsv41_fp8_prefill import (
+        fp8_index_logits_prefill,
+    )
     from flaggems_sglang.runtime.backend._nvidia.hopper.ops.dsv41_fp8_prefill_candidates import (
         supports_candidate_prefill,
     )
-    from flaggems_sglang_plugin.prefill_compat import fp8_index_logits_prefill
 
     length, block_size = 129, 8
     q = torch.randint(-2, 3, (rows, heads, 128), device="cuda").to(
