@@ -20,6 +20,7 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
+from .cases import BenchmarkCasePlan, single_input_builder
 from .op_benchmark import OpBenchmark
 
 # Shapes match kernel-comp-baseline/problems/activation_norm/rmsnorm_hf.
@@ -41,12 +42,27 @@ def _input_fn(shape, cur_dtype, device):
     yield x, w, 1e-6
 
 
+def _case_fn(shape, cur_dtype):
+    (num_tokens, hidden) = shape
+    yield BenchmarkCasePlan(
+        shape={"x": (num_tokens, hidden), "w": (hidden,)},
+        params={
+            "configuration": shape,
+            "seed": 9,
+            "num_tokens": num_tokens,
+            "hidden": hidden,
+        },
+        builder_args=(shape,),
+    )
+
+
 @pytest.mark.rmsnorm_hf
 def test_perf_rmsnorm_hf():
     bench = OpBenchmark(
         op_name="rmsnorm_hf",
         torch_op=get_reference("rmsnorm_hf"),
-        input_fn=_input_fn,
+        case_fn=_case_fn,
+        build_inputs_fn=single_input_builder(_input_fn),
         dtypes=[torch.bfloat16],
         shapes=SHAPES,
         more_shapes=MORE_SHAPES,

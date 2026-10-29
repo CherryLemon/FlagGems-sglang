@@ -20,6 +20,7 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
+from .cases import BenchmarkCasePlan, single_input_builder
 from .op_benchmark import OpBenchmark, is_case_listing
 
 # Shapes match kernel-comp-baseline/problems/rope/interleaved_rope. The last
@@ -42,6 +43,21 @@ def _input_fn(shape, cur_dtype, device):
     yield x, list(mrope_section)
 
 
+def _case_fn(shape, cur_dtype):
+    (s, d, mrope_section) = shape
+    yield BenchmarkCasePlan(
+        shape={"x": (3, s, d)},
+        params={
+            "configuration": shape,
+            "seed": 0,
+            "s": s,
+            "d": d,
+            "mrope_section": mrope_section,
+        },
+        builder_args=(shape,),
+    )
+
+
 @pytest.mark.interleaved_rope
 def test_perf_interleaved_rope():
     # This op has a reference but no Triton implementation yet.
@@ -53,7 +69,8 @@ def test_perf_interleaved_rope():
     bench = OpBenchmark(
         op_name="interleaved_rope",
         torch_op=get_reference("interleaved_rope"),
-        input_fn=_input_fn,
+        case_fn=_case_fn,
+        build_inputs_fn=single_input_builder(_input_fn),
         dtypes=[torch.bfloat16],
         shapes=SHAPES,
         more_shapes=MORE_SHAPES,

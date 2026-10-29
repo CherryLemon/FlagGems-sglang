@@ -20,6 +20,7 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
+from .cases import BenchmarkCasePlan, single_input_builder
 from .op_benchmark import OpBenchmark
 
 SHAPES = [(bs, 64, 16384) for bs in (1, 8, 32)]
@@ -44,12 +45,31 @@ def _input_fn(shape, cur_dtype, device):
     yield seq_lens, block_tables, {"block_size": block_size}
 
 
+def _case_fn(shape, cur_dtype):
+    (bs, block_size, max_len) = shape
+    yield BenchmarkCasePlan(
+        shape={
+            "seq_lens": (bs,),
+            "block_tables": (bs, (max_len + block_size - 1) // block_size),
+        },
+        params={
+            "configuration": shape,
+            "seed": 0,
+            "bs": bs,
+            "block_size": block_size,
+            "max_len": max_len,
+        },
+        builder_args=(shape,),
+    )
+
+
 @pytest.mark.build_trtllm_mha_page_table
 def test_perf_build_trtllm_mha_page_table():
     bench = OpBenchmark(
         op_name="build_trtllm_mha_page_table",
         torch_op=get_reference("build_trtllm_mha_page_table"),
-        input_fn=_input_fn,
+        case_fn=_case_fn,
+        build_inputs_fn=single_input_builder(_input_fn),
         dtypes=[torch.bfloat16],
         shapes=SHAPES,
         more_shapes=MORE_SHAPES,

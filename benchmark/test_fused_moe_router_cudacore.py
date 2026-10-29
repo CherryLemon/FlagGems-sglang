@@ -20,6 +20,7 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 
+from .cases import BenchmarkCasePlan, single_input_builder
 from .op_benchmark import OpBenchmark, is_case_listing
 
 # Shapes match kernel-comp-baseline/problems/moe/fused_moe_router_cudacore.
@@ -55,6 +56,28 @@ def _input_fn(shape, cur_dtype, device):
     yield x, router_weight, topk, softcap, bias
 
 
+def _case_fn(shape, cur_dtype):
+    (bs, hidden_dim, num_experts, topk, softcap, has_bias) = shape
+    yield BenchmarkCasePlan(
+        shape={
+            "x": (bs, hidden_dim),
+            "router_weight": (num_experts, hidden_dim),
+            "bias": (num_experts,) if has_bias else None,
+        },
+        params={
+            "configuration": shape,
+            "seed": 0,
+            "bs": bs,
+            "hidden_dim": hidden_dim,
+            "num_experts": num_experts,
+            "topk": topk,
+            "softcap": softcap,
+            "has_bias": has_bias,
+        },
+        builder_args=(shape,),
+    )
+
+
 @pytest.mark.fused_moe_router_cudacore
 def test_perf_fused_moe_router_cudacore():
     # This op has a reference but no Triton implementation yet.
@@ -66,7 +89,8 @@ def test_perf_fused_moe_router_cudacore():
     bench = OpBenchmark(
         op_name="fused_moe_router_cudacore",
         torch_op=get_reference("fused_moe_router_cudacore"),
-        input_fn=_input_fn,
+        case_fn=_case_fn,
+        build_inputs_fn=single_input_builder(_input_fn),
         dtypes=[torch.bfloat16],
         shapes=SHAPES,
         more_shapes=MORE_SHAPES,
