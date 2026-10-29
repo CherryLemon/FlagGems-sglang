@@ -131,7 +131,7 @@ def producer_family(
 def dsv41_long_context_producer(
     q,
     weights,
-    rt,
+    req_to_token,
     req,
     lens,
     table,
@@ -146,7 +146,7 @@ def dsv41_long_context_producer(
     family = producer_family(
         q,
         weights,
-        rt,
+        req_to_token,
         req,
         lens,
         table,
@@ -174,7 +174,7 @@ def dsv41_long_context_producer(
         return source_impl(
             q,
             weights,
-            rt,
+            req_to_token,
             req,
             lens,
             table,
@@ -213,7 +213,7 @@ def dsv41_long_context_producer(
     bf16._fp4_index_logits_grouped_persistent_kernel[(b // 6, 512)](
         q,
         weights,
-        rt,
+        req_to_token,
         req,
         lens,
         table,
@@ -227,7 +227,7 @@ def dsv41_long_context_producer(
         q.stride(0),
         q.stride(1),
         weights.stride(0),
-        rt.stride(0),
+        req_to_token.stride(0),
         stride,
         stride,
         GROUP=6,
@@ -275,10 +275,10 @@ def compact_supported(
 def dsv41_long_context_compact(
     q,
     weights,
-    rt,
+    req_to_token,
     req,
-    blocks,
-    counts,
+    candidate_blocks,
+    candidate_lens,
     table,
     page_size,
     ratio,
@@ -288,10 +288,10 @@ def dsv41_long_context_compact(
     if not compact_supported(
         q,
         weights,
-        rt,
+        req_to_token,
         req,
-        blocks,
-        counts,
+        candidate_blocks,
+        candidate_lens,
         table,
         page_size,
         ratio,
@@ -301,8 +301,8 @@ def dsv41_long_context_compact(
     q = q.contiguous()
     weights = weights.contiguous()
     req = req.contiguous()
-    blocks = blocks.contiguous()
-    counts = counts.contiguous()
+    candidate_blocks = candidate_blocks.contiguous()
+    candidate_lens = candidate_lens.contiguous()
     b = q.shape[0]
     out = torch.empty((b, 16384), device=q.device, dtype=torch.float32)
     workers = WORKERS[b]
@@ -310,15 +310,15 @@ def dsv41_long_context_compact(
     _long_context_candidate_kernel[(b, workers)](
         q,
         weights,
-        rt,
+        req_to_token,
         req,
-        blocks,
-        counts,
+        candidate_blocks,
+        candidate_lens,
         table,
         out,
-        N_REQUESTS=rt.shape[0],
+        N_REQUESTS=req_to_token.shape[0],
         N_SLOTS=table.shape[0] * 64,
-        TABLE_STRIDE=rt.stride(0),
+        TABLE_STRIDE=req_to_token.stride(0),
         CACHE_STRIDE=table.stride(0),
         WORKERS=workers,
         RT_WIDTH=RT_WIDTH,

@@ -197,3 +197,42 @@ def test_unavailable_source_falls_back_before_dispatch(
     long_context.__package__ = "dsv41_test_ops"
     long_context.__spec__ = None
     assert long_context.dsv41_long_context_producer(*inputs()) is None
+
+
+def test_public_entries_preserve_native_keyword_names(long_context):
+    args = inputs()
+    # Exercise the unsupported path with keyword-only call sites; no GPU is used.
+    args[6] = 128
+    assert (
+        long_context.dsv41_long_context_producer(
+            q=args[0],
+            weights=args[1],
+            req_to_token=args[2],
+            req=args[3],
+            lens=args[4],
+            table=args[5],
+            page_size=args[6],
+            ratio=args[7],
+            width=args[8],
+            candidate_block_size=args[9],
+            write_logits=args[10],
+            query_group_size=args[11],
+        )
+        is None
+    )
+    blocks, counts = Tensor((108, 2048), "i32"), Tensor((108,), "i32")
+    assert (
+        long_context.dsv41_long_context_compact(
+            q=args[0],
+            weights=args[1],
+            req_to_token=args[2],
+            req=args[3],
+            candidate_blocks=blocks,
+            candidate_lens=counts,
+            table=args[5],
+            page_size=128,
+            ratio=1,
+            candidate_block_size=8,
+        )
+        is None
+    )
