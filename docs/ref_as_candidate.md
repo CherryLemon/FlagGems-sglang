@@ -17,9 +17,10 @@ pytest -q benchmark/test_silu_and_mul.py -m silu_and_mul --level core \
 
 ## Declare a correctness reference
 
-The initial migrated operator is `silu_and_mul`. Tests remain ordinary pytest
-functions: supply the reference explicitly when obtaining the candidate, then
-run the original input generation, reference call and assertions.
+All 125 operator correctness tests use ordinary pytest functions and explicitly
+supply their existing reference to `get_candidate`. Input generation, the
+expected-side reference call, comparisons and test-owned copies remain in the
+original test body. For example:
 
 ```python
 from flaggems_sglang.reference import get_reference
