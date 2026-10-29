@@ -87,7 +87,9 @@ jobs:
   select-targets:
     name: select ci targets
     needs: code-style
-    runs-on: h20
+    # Selection only reads Git metadata and uses Python's standard library.
+    # Reserve the H20 runner for the actual device tests below.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       mode: ${{ steps.select.outputs.mode }}
