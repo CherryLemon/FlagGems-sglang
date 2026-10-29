@@ -18,6 +18,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -186,7 +187,6 @@ def mock_reviewed_install(monkeypatch, tmp_path, plugin, *, abi=1):
     for name in groups[0][1:3]:
         fn = lambda *args, _name=name, **kwargs: ("framework", _name)
         setattr(gems, name, fn)
-        replacements[name] = fn
     monkeypatch.setitem(sys.modules, "flaggems_sglang", gems)
     packages = {}
     for name in [
@@ -263,6 +263,11 @@ def test_install_routes_common_math_and_framework_fusion(
     assert p.install() is handle
     for name, fn in replacements.items():
         assert getattr(alias, name) is fn
+    for name in (
+        "fp4_index_logits_req_to_token",
+        "fp4_index_logits_candidate_blocks",
+    ):
+        assert getattr(alias, name) is originals[name]
 
     class Tensor:
         ndim = 2
@@ -302,4 +307,30 @@ def test_common_abi_mismatch_fails_before_rebinding(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="FlagGems SM90 operator ABI"):
         p.install()
     assert all(getattr(alias, name) is fn for name, fn in originals.items())
+    assert p._handle is None
+
+
+def test_failed_install_rolls_back_owned_aliases_and_child(
+    monkeypatch, tmp_path
+):
+    p = fresh()
+    alias, originals, _, _, _ = mock_reviewed_install(monkeypatch, tmp_path, p)
+
+    class FailingModule(types.ModuleType):
+        def __setattr__(self, name, value):
+            if name == "fn" and self.__dict__.get("fail"):
+                raise RuntimeError("binding failure")
+            return super().__setattr__(name, value)
+
+    extra = FailingModule("sglang.injected_failure")
+    extra.fn = originals["fp4_index_logits_decode"]
+    extra.fail = True
+    monkeypatch.setitem(sys.modules, extra.__name__, extra)
+    child = types.SimpleNamespace(uninstall=mock.Mock())
+    monkeypatch.setattr(p, "_install_w4a8", lambda: child)
+    with pytest.raises(RuntimeError, match="binding failure"):
+        p.install()
+    assert all(getattr(alias, name) is fn for name, fn in originals.items())
+    assert extra.fn is originals["fp4_index_logits_decode"]
+    child.uninstall.assert_called_once_with()
     assert p._handle is None

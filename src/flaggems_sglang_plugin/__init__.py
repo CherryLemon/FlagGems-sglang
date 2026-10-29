@@ -105,8 +105,6 @@ def install():
     )
     from flag_gems.ops.w8a8_block_fp8_matmul import w8a8_block_fp8_matmul
 
-    import flaggems_sglang as gems
-
     if (BLOCK_FP8_SM90_ABI, FP4_INDEX_SCORE_ABI, model_mhc.MHC_EXACT_ABI) != (
         1,
         1,
@@ -121,11 +119,8 @@ def install():
     fp8 = modules["sglang.kernels.ops.quantization.fp8_kernel"]
     replacements = {}
     replacements[fp4.fp4_index_logits_decode] = fp4_index_logits_decode
-    for name in [
-        "fp4_index_logits_req_to_token",
-        "fp4_index_logits_candidate_blocks",
-    ]:
-        replacements[getattr(fp4, name)] = getattr(gems, name)
+    # Request-table and candidate indexers are routed by sglang-plugin-FL
+    # through its backend policy, rather than patched here.
     for name in ["hc_mix_stats", "hc_mix_stats_sinkhorn_exact", "hc_combine"]:
         replacements[getattr(mhc, name)] = getattr(model_mhc, name)
     # The release backport uses native implementations until installation.
@@ -162,10 +157,9 @@ def install():
         return original(A, B, As, Bs, block_size, output_dtype)
 
     replacements[original] = block_fp8
-    moe = _install_w4a8()
     bindings = []
-    # Rebind already imported aliases as well as the defining modules. Match
-    # function objects, never broad attribute names or unrelated libraries.
+    pending = []
+    # Resolve all aliases before installing any replacements.
     for name, module in list(sys.modules.items()):
         if not name.startswith("sglang.") or module is None:
             continue
@@ -177,8 +171,26 @@ def install():
             except TypeError:
                 continue
             if replacement is not None:
-                setattr(module, attr, replacement)
-                bindings.append((module, attr, value, replacement))
+                pending.append((module, attr, value, replacement))
+
+    moe = None
+    try:
+        moe = _install_w4a8()
+        for module, attr, old, new in pending:
+            if getattr(module, attr, None) is not old:
+                raise RuntimeError(
+                    "SGLang binding changed during installation"
+                )
+            setattr(module, attr, new)
+            bindings.append((module, attr, old, new))
+    except BaseException:
+        # Preserve wrappers belonging to another owner and undo our child first.
+        for module, attr, old, new in reversed(bindings):
+            if getattr(module, attr, None) is new:
+                setattr(module, attr, old)
+        if moe is not None:
+            moe.uninstall()
+        raise
     _handle = Installation(bindings, replacements, (moe,) if moe else ())
     logger.info(
         "FlagGems DSV4.1 SM90 operator adapter installed: device=%d, bindings=%d",
