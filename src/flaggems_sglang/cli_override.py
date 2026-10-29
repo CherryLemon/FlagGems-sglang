@@ -262,6 +262,11 @@ def add_override_arguments(parser) -> None:
             "(default: dummy-candidate-report.json)."
         ),
     )
+    group.addoption(
+        "--ref-as-candidate",
+        action="store_true",
+        help="Execute an explicitly declared reference as the candidate.",
+    )
     parser._flaggems_sglang_override_arguments = True
 
 
@@ -277,6 +282,10 @@ def configure_overrides(config) -> DynamicOpOverride:
     # unconfigure hooks also use cleanup_overrides, which is idempotent.
     config.add_cleanup(lambda: cleanup_overrides(config))
     try:
+        if getattr(config.option, "ref_as_candidate", False):
+            from .reference_candidate import configure_reference_candidate
+
+            configure_reference_candidate(config)
         # Do not import/register the probe in ordinary test sessions.
         if getattr(config.option, "dummy_candidate", None) or getattr(
             config.option, "dummy_report", None
