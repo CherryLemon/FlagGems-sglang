@@ -14,7 +14,8 @@
 
 """Correctness-gated, alternating CUDA Graph operator microbenchmarks.
 
-Run from this repository with PYTHONPATH=src. FP4 uses synthetic pages or retained, SHA-pinned C32 inputs through --fixtures.
+Run with PYTHONPATH=src. FP4 uses synthetic pages or retained, SHA-pinned C32
+inputs through --fixtures.
 """
 
 import argparse
@@ -28,9 +29,10 @@ import time
 from functools import lru_cache
 from pathlib import Path
 
-import flaggems_sglang as gems
 import torch
 import triton
+
+import flaggems_sglang as gems
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.dsv41_helpers import (  # noqa: E402
@@ -121,7 +123,8 @@ def main():
         "gpu": torch.cuda.get_device_name(),
         "capability": torch.cuda.get_device_capability(),
         "versions": {
-            n: importlib.metadata.version(n) for n in ["torch", "triton", "tilelang"]
+            n: importlib.metadata.version(n)
+            for n in ["torch", "triton", "tilelang"]
         },
         "input_provenance": "FP4 provenance recorded separately below",
         "protocol": (
@@ -139,7 +142,9 @@ def main():
         "baseline": {
             "fp4": "native per-query scoring/candidate chain",
         },
-        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "script_sha256": hashlib.sha256(
+            Path(__file__).read_bytes()
+        ).hexdigest(),
         "measurements": [],
     }
     if a.fixtures:
@@ -210,7 +215,11 @@ def main():
                     candidate_block_size=8 if shape[2] == 1 else 0,
                     static_capacity_full_tokens=655627,
                     fixture_kind=(
-                        ("actual C32" if shape[0] == 48 else "derived from C32")
+                        (
+                            "actual C32"
+                            if shape[0] == 48
+                            else "derived from C32"
+                        )
                         if a.fixtures
                         else "synthetic distinct request pages"
                     ),

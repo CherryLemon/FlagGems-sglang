@@ -14,7 +14,6 @@
 
 # Portions adapted from SGLang (Copyright 2023-2026 SGLang Team),
 # including the validated CherryLemon DeepSeek V4.1 H100 serving fork.
-# See docs/dsv41-h100-operators.md for source identities and numerical scope.
 """Decode-time low-ratio indexer logits for Hopper.
 
 DeepGEMM's fp8_fp4 mqa-logits kernels need SM100/SM120. This Triton kernel covers
@@ -46,8 +45,8 @@ def _load_fp4_math():
 
         if fp4_indexer.FP4_INDEX_SCORE_ABI != 1:
             raise RuntimeError("incompatible FlagGems FP4 index-score ABI")
-        _e2m1_decode = fp4_indexer._e2m1_decode
         fp4_weighted_head_score = fp4_indexer.fp4_weighted_head_score
+        _e2m1_decode = fp4_indexer._e2m1_decode
 
 
 INDEX_HEAD_DIM = 128
@@ -885,7 +884,7 @@ def _tle_native_fp8():
     # Resolve optional TLE/helper availability once, before Graph capture.
     # Upstream Triton 3.6 and older FlagGems installations retain Gluon.
     try:
-        from .dsv41_fp4_tle_indexer import fp4_index_logits_req_to_token
+        from ._dsv41_fp4_tle_indexer import fp4_index_logits_req_to_token
     except ImportError:
         return None
     return fp4_index_logits_req_to_token
@@ -941,7 +940,7 @@ def fp4_index_logits_req_to_token(
                 _tle_native_fp8() if _use_tle_native_fp8(B, ratio) else None
             )
             if native_fp8 is None:
-                from .dsv41_fp4_fp8_indexer import (
+                from ._dsv41_fp4_fp8_indexer import (
                     fp4_index_logits_req_to_token as native_fp8,
                 )
 

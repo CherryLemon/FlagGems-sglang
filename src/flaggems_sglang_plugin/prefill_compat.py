@@ -6,10 +6,13 @@
 import torch
 import triton
 import triton.language as tl
-from flaggems_sglang_plugin.compat.dsv41.fp4_prefill import dense_fp8_index_logits
+
 from flaggems_sglang.runtime.backend._nvidia.hopper.ops.dsv41_fp8_prefill_candidates import (
     candidate_prefill_score,
     supports_candidate_prefill,
+)
+from flaggems_sglang_plugin.compat.dsv41.fp4_prefill import (
+    dense_fp8_index_logits,
 )
 
 INDEX_HEAD_DIM = 128
@@ -47,14 +50,20 @@ def _fp8_index_logits_prefill_kernel(
             mask=out_cols < OUT_L,
             other=-1,
         ).to(tl.int64)
-        offs_l = blocks * CANDIDATE_BLOCK_SIZE + out_cols % CANDIDATE_BLOCK_SIZE
+        offs_l = (
+            blocks * CANDIDATE_BLOCK_SIZE + out_cols % CANDIDATE_BLOCK_SIZE
+        )
     else:
         offs_l = out_cols
     offs_h = tl.arange(0, H)
     offs_d = tl.arange(0, D)
     n_vis = tl.load(lens_ptr + b)
-    valid = (offs_l >= 0) & (offs_l < tl.minimum(n_vis, L)) & (out_cols < OUT_L)
-    q = tl.load(q_ptr + b * stride_qb + offs_h[:, None] * stride_qh + offs_d[None, :])
+    valid = (
+        (offs_l >= 0) & (offs_l < tl.minimum(n_vis, L)) & (out_cols < OUT_L)
+    )
+    q = tl.load(
+        q_ptr + b * stride_qb + offs_h[:, None] * stride_qh + offs_d[None, :]
+    )
     k = tl.load(
         k_ptr + offs_l[:, None] * stride_kl + offs_d[None, :],
         mask=valid[:, None],
@@ -90,11 +99,15 @@ def fp8_index_logits_prefill(
     if candidate_block_size == 8 and supports_candidate_prefill(
         q, weights, keys, lens, candidate_blocks
     ):
-        return candidate_prefill_score(q, weights, keys, lens, candidate_blocks)
+        return candidate_prefill_score(
+            q, weights, keys, lens, candidate_blocks
+        )
     assert q.dtype == torch.float8_e4m3fn and q.shape[-1] == INDEX_HEAD_DIM
     rows, heads, _ = q.shape
     width = keys.shape[0]
-    assert keys.dtype == torch.float8_e4m3fn and keys.shape[1:] == (INDEX_HEAD_DIM,)
+    assert keys.dtype == torch.float8_e4m3fn and keys.shape[1:] == (
+        INDEX_HEAD_DIM,
+    )
     assert weights.shape == (rows, heads)
     assert lens.shape == (rows,)
     q = q.contiguous()

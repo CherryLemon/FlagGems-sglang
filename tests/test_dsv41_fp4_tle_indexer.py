@@ -17,14 +17,14 @@ import torch
 import triton
 
 pytest.importorskip("triton.experimental.tle.language")
-from flaggems_sglang.runtime.backend._nvidia.hopper.ops import (
+from flaggems_sglang.runtime.backend._nvidia.hopper.ops import (  # noqa: E402
+    _dsv41_fp4_tle_indexer as native,
+)
+from flaggems_sglang.runtime.backend._nvidia.hopper.ops import (  # noqa: E402
     dsv41_fp4_indexer as control,
 )
-from flaggems_sglang.runtime.backend._nvidia.hopper.ops import (
-    dsv41_fp4_tle_indexer as native,
-)
 
-from .dsv41_helpers import assert_exact, fp4_inputs
+from .dsv41_helpers import assert_exact, fp4_inputs  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available()
@@ -230,8 +230,8 @@ def test_unhinted_multiple_of_six_does_not_enter_native_tle(monkeypatch):
 
 
 def test_missing_tle_helper_retains_native_gluon(monkeypatch):
-    from flaggems_sglang.runtime.backend._nvidia.hopper.ops import (
-        dsv41_fp4_fp8_indexer as gluon,
+    from flaggems_sglang.runtime.backend._nvidia.hopper.ops import (  # noqa: E402
+        _dsv41_fp4_fp8_indexer as gluon,
     )
 
     xs = _args(257, 2)

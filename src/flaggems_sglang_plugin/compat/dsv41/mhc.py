@@ -13,4 +13,10 @@ def hc_mix_stats_sinkhorn(x, fn, scale, base, hc, iters, rms_eps, hc_eps):
     mixes = hc_mix_stats(x, fn, rms_eps)
     return hc_split_sinkhorn(mixes, scale, base, hc, iters, hc_eps)
 
-__all__ = ["hc_combine", "hc_mix_stats", "hc_mix_stats_sinkhorn", "hc_mix_stats_sinkhorn_exact"]
+
+__all__ = [
+    "hc_combine",
+    "hc_mix_stats",
+    "hc_mix_stats_sinkhorn",
+    "hc_mix_stats_sinkhorn_exact",
+]

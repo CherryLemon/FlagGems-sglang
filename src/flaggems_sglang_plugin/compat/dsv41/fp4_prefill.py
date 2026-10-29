@@ -10,7 +10,11 @@ mapping, compressed-candidate layout or SGLang imports are accepted here.
 import torch
 import triton
 import triton.language as tl
-from flag_gems.fused.dsv41.fp4_indexer import PAYLOAD_BYTES, SCALE_BYTES, _e2m1_decode
+from flag_gems.fused.dsv41.fp4_indexer import (
+    PAYLOAD_BYTES,
+    SCALE_BYTES,
+    _e2m1_decode,
+)
 
 INDEX_HEAD_DIM = 128
 FP8_E4M3_MAX = 448.0
@@ -63,7 +67,9 @@ def unpack_fp4_index_keys_to_fp8(
 ) -> torch.Tensor:
     """Gather FP4 index-K rows and decode them directly into E4M3."""
     if not slots.is_cuda or table.device != slots.device:
-        raise ValueError("expected CUDA physical slots and packed table on one device")
+        raise ValueError(
+            "expected CUDA physical slots and packed table on one device"
+        )
     if page_size <= 0:
         raise ValueError("page_size must be positive")
     assert slots.dim() == 1
@@ -108,7 +114,10 @@ def _quantize_bf16_index_queries_fp8_kernel(
     ).to(tl.float32)
     q_fp8 = tl.clamp(q, -FP8_MAX, FP8_MAX).to(out_ptr.dtype.element_ty)
     tl.store(
-        out_ptr + row * stride_ob + offs_h[:, None] * stride_oh + offs_d[None, :],
+        out_ptr
+        + row * stride_ob
+        + offs_h[:, None] * stride_oh
+        + offs_d[None, :],
         q_fp8,
     )
 
@@ -163,8 +172,12 @@ def _dense_fp8_prefill_kernel(
     offs_h = tl.arange(0, H)
     offs_d = tl.arange(0, D)
     n_vis = tl.load(lens_ptr + b)
-    valid = (offs_l >= 0) & (offs_l < tl.minimum(n_vis, L)) & (out_cols < OUT_L)
-    q = tl.load(q_ptr + b * stride_qb + offs_h[:, None] * stride_qh + offs_d[None, :])
+    valid = (
+        (offs_l >= 0) & (offs_l < tl.minimum(n_vis, L)) & (out_cols < OUT_L)
+    )
+    q = tl.load(
+        q_ptr + b * stride_qb + offs_h[:, None] * stride_qh + offs_d[None, :]
+    )
     k = tl.load(
         k_ptr + offs_l[:, None] * stride_kl + offs_d[None, :],
         mask=valid[:, None],
@@ -193,7 +206,9 @@ def dense_fp8_index_logits(q, weights, keys, lens):
         or lens.shape != (rows,)
     ):
         raise ValueError("incompatible dense FP8 score inputs")
-    if not q.is_cuda or any(t.device != q.device for t in (weights, keys, lens)):
+    if not q.is_cuda or any(
+        t.device != q.device for t in (weights, keys, lens)
+    ):
         raise ValueError("expected tensors on one CUDA device")
     q, weights, keys = (
         q.contiguous(),
@@ -203,7 +218,9 @@ def dense_fp8_index_logits(q, weights, keys, lens):
     width = keys.shape[0]
     out_width = triton.cdiv(width, 4) * 4
     if rows == 0 or out_width == 0:
-        return torch.empty((rows, out_width), dtype=torch.float32, device=q.device)
+        return torch.empty(
+            (rows, out_width), dtype=torch.float32, device=q.device
+        )
     if (
         heads == 32
         and triton.__version__.split("+")[0] == "3.6.0"
@@ -216,7 +233,9 @@ def dense_fp8_index_logits(q, weights, keys, lens):
         return fp8_prefill_score(q, weights, keys, lens)
     out = torch.empty((rows, out_width), dtype=torch.float32, device=q.device)
     block = (
-        256 if heads == 32 and out_width >= 4096 and rows * out_width >= 262144 else 64
+        256
+        if heads == 32 and out_width >= 4096 and rows * out_width >= 262144
+        else 64
     )
     _dense_fp8_prefill_kernel[(rows, triton.cdiv(out_width, block))](
         q,

@@ -22,7 +22,9 @@ from flag_gems.runtime import backend as g
 assert s.get_vendor_module('nvidia').__name__ == 'flaggems_sglang.runtime.backend._nvidia'
 assert g.get_vendor_module('nvidia').__file__.startswith(__import__('flag_gems').__path__[0])
 assert s.get_vendor_info().__class__.__module__.startswith('flaggems_sglang.')
-assert __import__('sys').modules[g.get_vendor_info().__class__.__module__].__file__.startswith(__import__('flag_gems').__path__[0])
+assert __import__('sys').modules[g.get_vendor_info().__class__.__module__].__file__.startswith(
+    __import__('flag_gems').__path__[0]
+)
 assert s.BackendArchEvent().arch_module.__name__.startswith('flaggems_sglang.')
 print('BOTH_IMPORT_ORDERS_PASS')
 """

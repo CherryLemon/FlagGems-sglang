@@ -174,8 +174,12 @@ def candidate_prefill_score(q, weights, keys, lens, candidate_blocks):
     Candidate -1 is an invalid block; invisible output positions are -inf.
     The caller keeps the original entry point outside this qualified domain.
     """
-    if not supports_candidate_prefill(q, weights, keys, lens, candidate_blocks):
-        raise ValueError("unsupported SGLang compressed-candidate score layout")
+    if not supports_candidate_prefill(
+        q, weights, keys, lens, candidate_blocks
+    ):
+        raise ValueError(
+            "unsupported SGLang compressed-candidate score layout"
+        )
     m, length, width = q.shape[0], keys.shape[0], 2048 * 8
     out = torch.empty((m, width), device=q.device, dtype=torch.float32)
     store_cache = ".cs" if length > 131072 else ""

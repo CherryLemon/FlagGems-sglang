@@ -26,7 +26,7 @@ from flag_gems.fused.dsv41.fp4_fp8_tle import (
     decode_fp4_e2m1_words_to_fp8x4 as _decode_u32,
 )
 
-from .dsv41_fp4_fp8_indexer import _fallback, _prepare_all, bf16
+from ._dsv41_fp4_fp8_indexer import _fallback, _prepare_all, bf16
 
 
 @triton.jit
@@ -50,7 +50,7 @@ def _load_tile(
     BL: tl.constexpr,
 ):
     il = tl.arange(0, BL)
-    _ik = tl.arange(0, 128)
+    _ik = tl.arange(0, 128)  # noqa: F841
     si = tl.arange(0, 4)
     logical = tile * BL + il
     slot = (
@@ -69,14 +69,17 @@ def _load_tile(
     ).to(tl.int32)
     low, high = tl.min(exps, 1), tl.max(exps, 1)
     fast = eligible & (
-        tl.sum(((high - low > 4) | (high > 191) | (low < 64)).to(tl.int32), 0) == 0
+        tl.sum(((high - low > 4) | (high > 191) | (low < 64)).to(tl.int32), 0)
+        == 0
     )
     word_index = tl.arange(0, 8)
     shared_rows = tl.broadcast_to(il[:, None], (BL, 8))
     shared_cols = tl.broadcast_to((word_index * 4)[None, :], (BL, 8))
     for block in tl.static_range(4):
         words = tl.load(
-            (TABLE + row[:, None] + off[:, None] * 64).to(tl.pointer_type(tl.uint16))
+            (TABLE + row[:, None] + off[:, None] * 64).to(
+                tl.pointer_type(tl.uint16)
+            )
             + block * 8
             + word_index[None, :],
             (logical[:, None] < limit) & fast,
@@ -122,7 +125,7 @@ def _compute_tile(
     fast = tl.sum(validity.load(), 0) != 0
     if fast:
         exps = exponents.load()
-        _mh = tl.arange(0, 64)
+        _mh = tl.arange(0, 64)  # noqa: F841
         si = tl.arange(0, 4)
         lp = tile * BL + tl.arange(0, BL)
         og = tl.arange(0, 2)
@@ -160,15 +163,22 @@ def _compute_tile(
             qb = first + pair * 2 + og
             qlens = tl.load(LENS + qb)
             logit = tl.where(
-                lp[None, :] < tl.minimum(qlens[:, None], L), logit, -float("inf")
+                lp[None, :] < tl.minimum(qlens[:, None], L),
+                logit,
+                -float("inf"),
             )
             if WRITE_LOGITS:
-                tl.store(OUT + qb[:, None] * SO + lp[None, :], logit, lp[None, :] < SO)
+                tl.store(
+                    OUT + qb[:, None] * SO + lp[None, :],
+                    logit,
+                    lp[None, :] < SO,
+                )
             if WRITE_CANDIDATES:
                 scores = tl.max(tl.reshape(logit, (2, BL // CB, CB)), 2)
                 ids = tile * (BL // CB) + tl.arange(0, BL // CB)
                 scores = tl.where(
-                    (qlens[:, None] > 0) & (ids[None, :] == (qlens[:, None] - 1) // CB),
+                    (qlens[:, None] > 0)
+                    & (ids[None, :] == (qlens[:, None] - 1) // CB),
                     float("inf"),
                     scores,
                 )
@@ -221,7 +231,9 @@ def _producer(
             BL,
         )
         writer.commit(sequence)
-        sequence += 1  # noqa: SIM113 -- TLE pipe sequence follows the device loop.
+        sequence += (
+            1  # noqa: SIM113 -- TLE pipe sequence follows the device loop.
+        )
 
 
 @triton.jit
@@ -273,11 +285,15 @@ def _consumer(
             WRITE_CANDIDATES,
         )
         fast = tl.sum(slot.validity.load(), 0) != 0
-        tl.store(FLAGS + tl.program_id(0) * tl.cdiv(L, BL) + tile, fast.to(tl.int32))
+        tl.store(
+            FLAGS + tl.program_id(0) * tl.cdiv(L, BL) + tile, fast.to(tl.int32)
+        )
         if not fast:
             tl.atomic_or(NEED + tl.program_id(0), 1, sem="relaxed")
         reader.release(sequence)
-        sequence += 1  # noqa: SIM113 -- TLE pipe sequence follows the device loop.
+        sequence += (
+            1  # noqa: SIM113 -- TLE pipe sequence follows the device loop.
+        )
 
 
 @triton.jit
@@ -319,7 +335,9 @@ def native_tle(
     reqs = tl.load(REQ + first + x, x < 6, other=req)
     heads = tl.arange(0, 256)
     qok = tl.load(QOK + first * 32 + heads, heads < 192, other=1)
-    eligible = (tl.sum((reqs != req).to(tl.int32), 0) == 0) & (tl.min(qok, 0) == 1)
+    eligible = (tl.sum((reqs != req).to(tl.int32), 0) == 0) & (
+        tl.min(qok, 0) == 1
+    )
     qsm = tle.gpu.alloc([12, 64, 32], tl.float8e4nv)
     qmeta = tle.gpu.alloc([16, 64], tl.float32, nv_mma_shared_layout=False)
     qh, qk = tl.arange(0, 64), tl.arange(0, 32)
@@ -343,7 +361,9 @@ def native_tle(
     k1 = tle.gpu.alloc([STAGES, BL, 32], tl.float8e4nv)
     k2 = tle.gpu.alloc([STAGES, BL, 32], tl.float8e4nv)
     k3 = tle.gpu.alloc([STAGES, BL, 32], tl.float8e4nv)
-    exponents = tle.gpu.alloc([STAGES, BL, 4], tl.int32, nv_mma_shared_layout=False)
+    exponents = tle.gpu.alloc(
+        [STAGES, BL, 4], tl.int32, nv_mma_shared_layout=False
+    )
     validity = tle.gpu.alloc([STAGES, 1], tl.int32, nv_mma_shared_layout=False)
     if WRITE_LOGITS and not WRITE_CANDIDATES:
         ol, og = tl.arange(0, BL), tl.arange(0, 2)
@@ -420,7 +440,9 @@ def native_tle(
         )
     else:
         for tile in range(
-            tl.program_id(1), tl.cdiv(tl.maximum(limit, 0), BL), tl.num_programs(1)
+            tl.program_id(1),
+            tl.cdiv(tl.maximum(limit, 0), BL),
+            tl.num_programs(1),
         ):
             _load_tile(
                 RT,
@@ -465,7 +487,8 @@ def native_tle(
             )
             fast = tl.sum(validity.slot(0).load(), 0) != 0
             tl.store(
-                FLAGS + tl.program_id(0) * tl.cdiv(L, BL) + tile, fast.to(tl.int32)
+                FLAGS + tl.program_id(0) * tl.cdiv(L, BL) + tile,
+                fast.to(tl.int32),
             )
             if not fast:
                 tl.atomic_or(NEED + tl.program_id(0), 1, sem="relaxed")
@@ -542,7 +565,9 @@ def fp4_index_logits_req_to_token(
     if candidate_block_size:
         num_blocks = triton.cdiv(width, candidate_block_size)
         storage = torch.empty(
-            (B, triton.cdiv(num_blocks, 4) * 4), dtype=torch.float32, device=q.device
+            (B, triton.cdiv(num_blocks, 4) * 4),
+            dtype=torch.float32,
+            device=q.device,
         )
         cs = storage[:, :num_blocks]
         cl = torch.empty(B, dtype=torch.int32, device=q.device)
@@ -579,7 +604,7 @@ def fp4_index_logits_req_to_token(
     bl = 128
     # Two 128-thread CTAs fit each of the 132 SMs at 255 registers/thread.
     # Round down: a single CTA beyond 264 forces a second persistent wave.
-    use_r16 = ratio == 1 and width == 655627 and not dense
+    use_r16 = ratio == 1 and width in (655627, 1048843) and not dense
     grid = (264 if B == 6 else 128) if use_r16 else max(1, 264 // (B // 6))
     kernel = _native_r16 if use_r16 else _native
     flags = torch.empty(

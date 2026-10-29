@@ -1,6 +1,8 @@
 """Exact captured R24 A8 tactic bank; unreviewed values are rejected."""
 
-SOURCE_RESULT_SHA = "b5d6f48c59a2fcce7113f267e28e3caf164a691c2135675e49636f0fa4796e25"
+SOURCE_RESULT_SHA = (
+    "b5d6f48c59a2fcce7113f267e28e3caf164a691c2135675e49636f0fa4796e25"
+)
 BASELINE_TACTICS = {
     "16/w13/112": {
         "block_shape": [16, 256, 256],

@@ -130,7 +130,8 @@ def install():
         replacements[getattr(mhc, name)] = getattr(model_mhc, name)
     # The release backport uses native implementations until installation.
     # Install every public cast/prefill entry as well as decode before Graph.
-    from .compat.dsv41 import fp4_prefill, mhc as release_mhc
+    from .compat.dsv41 import fp4_prefill
+    from .compat.dsv41 import mhc as release_mhc
     from .prefill_compat import fp8_index_logits_prefill
 
     for name in [

@@ -11,7 +11,20 @@ import torch
 import triton
 
 QUALIFIED_ROWS = frozenset(
-    (6144, 9216, 12282, 12288, 12294, 24570, 24576, 49146, 49152, 92160, 98304, 196608)
+    (
+        6144,
+        9216,
+        12282,
+        12288,
+        12294,
+        24570,
+        24576,
+        49146,
+        49152,
+        92160,
+        98304,
+        196608,
+    )
 )
 W2_QUALIFIED_ROWS = frozenset((98304,))
 W2_CONFIG = {
@@ -48,8 +61,8 @@ def supports(gate_up, topk_ids):
 def indexed_swiglu_quant(gate_up, topk_ids, quanted, scales):
     if not supports(gate_up, topk_ids):
         raise ValueError("unsupported SGLang/Humming indexed W4A8 layout")
-    from humming.ops.input import calc_scale, finalize_scale, quant_tensor
     from flag_gems.fused.dsv41.swiglu_row_quant import swiglu_row_quant
+    from humming.ops.input import calc_scale, finalize_scale, quant_tensor
 
     return swiglu_row_quant(
         gate_up,
@@ -63,4 +76,4 @@ def indexed_swiglu_quant(gate_up, topk_ids, quanted, scales):
     )
 
 
-__all__ = ['indexed_swiglu_quant']
+__all__ = ["indexed_swiglu_quant"]

@@ -17,14 +17,14 @@ import torch
 import triton
 
 pytest.importorskip("triton.experimental.gluon")
-from flaggems_sglang.runtime.backend._nvidia.hopper.ops import (
-    dsv41_fp4_fp8_indexer as native,
+from flaggems_sglang.runtime.backend._nvidia.hopper.ops import (  # noqa: E402
+    _dsv41_fp4_fp8_indexer as native,
 )
-from flaggems_sglang.runtime.backend._nvidia.hopper.ops import (
+from flaggems_sglang.runtime.backend._nvidia.hopper.ops import (  # noqa: E402
     dsv41_fp4_indexer as control,
 )
 
-from .dsv41_helpers import assert_exact, fp4_inputs
+from .dsv41_helpers import assert_exact, fp4_inputs  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available()

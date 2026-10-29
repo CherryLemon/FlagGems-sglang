@@ -26,7 +26,9 @@ def _masked_compact(
     expert = tl.program_id(0)
     slot = tl.program_id(1)
     count = tl.load(masked_m + expert)
-    tl.device_assert((count >= 0) & (count <= CAPACITY), "masked_m outside capacity")
+    tl.device_assert(
+        (count >= 0) & (count <= CAPACITY), "masked_m outside capacity"
+    )
     offset = tl.program_id(2) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offset < INTERMEDIATE
     OutDtype = down_input.dtype.element_ty
@@ -39,7 +41,9 @@ def _masked_compact(
         up_output = tl.load(up_output_ptr + offset, mask=mask)
         if HAS_SWIGLU_LIMIT:
             gate_output = tl.minimum(gate_output, SWIGLU_LIMIT)
-            up_output = tl.maximum(tl.minimum(up_output, SWIGLU_LIMIT), -SWIGLU_LIMIT)
+            up_output = tl.maximum(
+                tl.minimum(up_output, SWIGLU_LIMIT), -SWIGLU_LIMIT
+            )
         gate_output_activated = ACTIVATE(gate_output, "silu")
         act_mul_output = gate_output_activated * up_output
         act_mul_output = act_mul_output.to(OutDtype)

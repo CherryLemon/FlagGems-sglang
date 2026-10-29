@@ -85,7 +85,9 @@ def _native_r16(
     reqs = gl.load(REQ + first + x, x < 6, other=req)
     heads = gl.arange(0, 256, layout=meta)
     qok = gl.load(QOK + first * 32 + heads, heads < 192, other=1)
-    eligible = (gl.sum((reqs != req).to(gl.int32), 0) == 0) & (gl.min(qok, 0) == 1)
+    eligible = (gl.sum((reqs != req).to(gl.int32), 0) == 0) & (
+        gl.min(qok, 0) == 1
+    )
     qlayout: gl.constexpr = gl.BlockedLayout([1, 4], [4, 8], [4, 1], [1, 0])
     qh = gl.arange(0, 64, layout=gl.SliceLayout(1, qlayout))
     qk = gl.arange(0, 32, layout=gl.SliceLayout(0, qlayout))
@@ -108,7 +110,9 @@ def _native_r16(
     keylayout: gl.constexpr = gl.BlockedLayout([1, 4], [2, 16], [4, 1], [1, 0])
     il = gl.arange(0, BL, layout=gl.SliceLayout(1, keylayout))
     ki = gl.arange(0, 128, layout=gl.SliceLayout(0, keylayout))
-    scalelayout: gl.constexpr = gl.BlockedLayout([1, 4], [32, 1], [4, 1], [0, 1])
+    scalelayout: gl.constexpr = gl.BlockedLayout(
+        [1, 4], [32, 1], [4, 1], [0, 1]
+    )
     sl = gl.arange(0, BL, layout=gl.SliceLayout(1, scalelayout))
     si = gl.arange(0, 4, layout=gl.SliceLayout(0, scalelayout))
     mma: gl.constexpr = gl.NVMMADistributedLayout(
@@ -123,7 +127,7 @@ def _native_r16(
     ):
         fast = eligible
         if eligible:
-            l = tile * BL + il
+            l = tile * BL + il  # noqa: E741
             slot = (
                 gl.load(
                     RT + req.to(gl.int64) * SR + l.to(gl.int64) * RATIO,
@@ -137,14 +141,23 @@ def _native_r16(
             sr = gl.convert_layout(row, gl.SliceLayout(1, scalelayout))
             sf = gl.convert_layout(off, gl.SliceLayout(1, scalelayout))
             exps = gl.load(
-                TABLE + sr[:, None] + PAGE * 64 + sf[:, None] * 4 + si[None, :],
+                TABLE
+                + sr[:, None]
+                + PAGE * 64
+                + sf[:, None] * 4
+                + si[None, :],
                 (tile * BL + sl[:, None]) < limit,
                 other=127,
             ).to(gl.int32)
             emin = gl.min(exps, 1)
             emax = gl.max(exps, 1)
             fast = (
-                gl.sum(((emax - emin > 4) | (emax > 191) | (emin < 64)).to(gl.int32), 0)
+                gl.sum(
+                    ((emax - emin > 4) | (emax > 191) | (emin < 64)).to(
+                        gl.int32
+                    ),
+                    0,
+                )
                 == 0
             )
             if fast:
@@ -159,7 +172,10 @@ def _native_r16(
                 packed = e2m1x4_to_fp8(pay)
                 kv = gl.reshape(packed, (BL, 4, 32)).permute((0, 2, 1))
                 kv = gl.convert_layout(
-                    kv, gl.BlockedLayout([1, 4, 4], [4, 8, 1], [4, 1, 1], [1, 0, 2])
+                    kv,
+                    gl.BlockedLayout(
+                        [1, 4, 4], [4, 8, 1], [4, 1, 1], [1, 0, 2]
+                    ),
                 ).reshape((BL, 32, 2, 2))
                 ke, ko = gl.split(kv)
                 k0, k2 = gl.split(ke)
@@ -172,10 +188,13 @@ def _native_r16(
                 for pair in range(3):
                     acc = gl.full((BL, 64), 0, gl.float32, mma)
                     for block in gl.static_range(4):
-                        qs = gl.load(QS + ((first + pair * 2) * 32 + mh) * 4 + block)
+                        qs = gl.load(
+                            QS + ((first + pair * 2) * 32 + mh) * 4 + block
+                        )
                         ex = gl.sum(gl.where(si[None, :] == block, exps, 0), 1)
                         ks = gl.convert_layout(
-                            gl.exp2((ex - 127).to(gl.float32)), gl.SliceLayout(1, mma)
+                            gl.exp2((ex - 127).to(gl.float32)),
+                            gl.SliceLayout(1, mma),
                         )
                         acc += block_scaled_fp8_dot(
                             ksm.index(block),
@@ -185,7 +204,9 @@ def _native_r16(
                             (BL, 64),
                             mma,
                         )
-                    w = gl.load(W + (first + pair * 2) * 32 + mh).to(gl.float32)
+                    w = gl.load(W + (first + pair * 2) * 32 + mh).to(
+                        gl.float32
+                    )
                     logit = fp8_weighted_head_score(acc, w, BL)
                     logit = gl.convert_layout(logit, outlayout)
                     qb = first + pair * 2 + og
@@ -198,12 +219,18 @@ def _native_r16(
                     )
                     if WRITE_LOGITS:
                         gl.store(
-                            OUT + qb[:, None] * SO + lp[None, :], logit, lp[None, :] < L
+                            OUT + qb[:, None] * SO + lp[None, :],
+                            logit,
+                            lp[None, :] < L,
                         )
                     if WRITE_CANDIDATES:
-                        scores = gl.max(gl.reshape(logit, (2, BL // CB, CB)), 2)
+                        scores = gl.max(
+                            gl.reshape(logit, (2, BL // CB, CB)), 2
+                        )
                         ids = tile * (BL // CB) + gl.arange(
-                            0, BL // CB, layout=gl.SliceLayout(0, scores.type.layout)
+                            0,
+                            BL // CB,
+                            layout=gl.SliceLayout(0, scores.type.layout),
                         )
                         qlc = gl.convert_layout(
                             qlens, gl.SliceLayout(1, scores.type.layout)
@@ -264,7 +291,9 @@ def _native(
     reqs = gl.load(REQ + first + x, x < 6, other=req)
     heads = gl.arange(0, 256, layout=meta)
     qok = gl.load(QOK + first * 32 + heads, heads < 192, other=1)
-    eligible = (gl.sum((reqs != req).to(gl.int32), 0) == 0) & (gl.min(qok, 0) == 1)
+    eligible = (gl.sum((reqs != req).to(gl.int32), 0) == 0) & (
+        gl.min(qok, 0) == 1
+    )
     qlayout: gl.constexpr = gl.BlockedLayout([1, 4], [4, 8], [4, 1], [1, 0])
     qh = gl.arange(0, 64, layout=gl.SliceLayout(1, qlayout))
     qk = gl.arange(0, 32, layout=gl.SliceLayout(0, qlayout))
@@ -295,13 +324,15 @@ def _native(
     keylayout: gl.constexpr = gl.BlockedLayout([1, 4], [2, 16], [4, 1], [1, 0])
     il = gl.arange(0, BL, layout=gl.SliceLayout(1, keylayout))
     ki = gl.arange(0, 128, layout=gl.SliceLayout(0, keylayout))
-    scalelayout: gl.constexpr = gl.BlockedLayout([1, 4], [32, 1], [4, 1], [0, 1])
+    scalelayout: gl.constexpr = gl.BlockedLayout(
+        [1, 4], [32, 1], [4, 1], [0, 1]
+    )
     sl = gl.arange(0, BL, layout=gl.SliceLayout(1, scalelayout))
     si = gl.arange(0, 4, layout=gl.SliceLayout(0, scalelayout))
     mma: gl.constexpr = gl.NVMMADistributedLayout(
         version=[3, 0], warps_per_cta=[4, 1], instr_shape=[16, 64, 32]
     )
-    _mh = gl.arange(0, 64, layout=gl.SliceLayout(0, mma))
+    _mh = gl.arange(0, 64, layout=gl.SliceLayout(0, mma))  # noqa: F841
     outlayout: gl.constexpr = gl.BlockedLayout([1, 4], [1, 32], [4, 1], [1, 0])
     og = gl.arange(0, 2, layout=gl.SliceLayout(1, outlayout))
     ol = gl.arange(0, BL, layout=gl.SliceLayout(0, outlayout))
@@ -324,7 +355,7 @@ def _native(
     ):
         fast = eligible
         if eligible:
-            l = tile * BL + il
+            l = tile * BL + il  # noqa: E741
             slot = (
                 gl.load(
                     RT + req.to(gl.int64) * SR + l.to(gl.int64) * RATIO,
@@ -338,14 +369,23 @@ def _native(
             sr = gl.convert_layout(row, gl.SliceLayout(1, scalelayout))
             sf = gl.convert_layout(off, gl.SliceLayout(1, scalelayout))
             exps = gl.load(
-                TABLE + sr[:, None] + PAGE * 64 + sf[:, None] * 4 + si[None, :],
+                TABLE
+                + sr[:, None]
+                + PAGE * 64
+                + sf[:, None] * 4
+                + si[None, :],
                 (tile * BL + sl[:, None]) < limit,
                 other=127,
             ).to(gl.int32)
             emin = gl.min(exps, 1)
             emax = gl.max(exps, 1)
             fast = (
-                gl.sum(((emax - emin > 4) | (emax > 191) | (emin < 64)).to(gl.int32), 0)
+                gl.sum(
+                    ((emax - emin > 4) | (emax > 191) | (emin < 64)).to(
+                        gl.int32
+                    ),
+                    0,
+                )
                 == 0
             )
             if fast:
@@ -360,7 +400,10 @@ def _native(
                 packed = e2m1x4_to_fp8(pay)
                 kv = gl.reshape(packed, (BL, 4, 32)).permute((0, 2, 1))
                 kv = gl.convert_layout(
-                    kv, gl.BlockedLayout([1, 4, 4], [4, 8, 1], [4, 1, 1], [1, 0, 2])
+                    kv,
+                    gl.BlockedLayout(
+                        [1, 4, 4], [4, 8, 1], [4, 1, 1], [1, 0, 2]
+                    ),
                 ).reshape((BL, 32, 2, 2))
                 ke, ko = gl.split(kv)
                 k0, k2 = gl.split(ke)
@@ -373,7 +416,9 @@ def _native(
                 for pair in range(3):
                     acc = gl.full((BL, 64), 0, gl.float32, mma)
                     for block in gl.static_range(4):
-                        qs = qmeta.index(block * 3 + pair).load(gl.SliceLayout(0, mma))
+                        qs = qmeta.index(block * 3 + pair).load(
+                            gl.SliceLayout(0, mma)
+                        )
                         ex = gl.sum(gl.where(si[None, :] == block, exps, 0), 1)
                         ks = gl.convert_layout(
                             normal_ue8m0_scale(ex), gl.SliceLayout(1, mma)
@@ -404,9 +449,13 @@ def _native(
                             lp[None, :] < SO,
                         )
                     if WRITE_CANDIDATES:
-                        scores = gl.max(gl.reshape(logit, (2, BL // CB, CB)), 2)
+                        scores = gl.max(
+                            gl.reshape(logit, (2, BL // CB, CB)), 2
+                        )
                         ids = tile * (BL // CB) + gl.arange(
-                            0, BL // CB, layout=gl.SliceLayout(0, scores.type.layout)
+                            0,
+                            BL // CB,
+                            layout=gl.SliceLayout(0, scores.type.layout),
                         )
                         qlc = gl.convert_layout(
                             qlens, gl.SliceLayout(1, scores.type.layout)
@@ -540,7 +589,9 @@ def fp4_index_logits_req_to_token(
     if candidate_block_size:
         num_blocks = triton.cdiv(width, candidate_block_size)
         storage = torch.empty(
-            (B, triton.cdiv(num_blocks, 4) * 4), dtype=torch.float32, device=q.device
+            (B, triton.cdiv(num_blocks, 4) * 4),
+            dtype=torch.float32,
+            device=q.device,
         )
         cs = storage[:, :num_blocks]
         cl = torch.empty(B, dtype=torch.int32, device=q.device)

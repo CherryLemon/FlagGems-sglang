@@ -60,7 +60,9 @@ def _masked_row_quant(
         for packed in tl.range(worker, total, WORKERS):
             match = (packed >= start) & (packed < prefix) & (experts < E)
             pid = tl.sum(tl.where(match, experts * CAP + packed - start, 0), 0)
-            x = tl.load(X + pid * K + cols, mask=cols < K, other=0.0).to(tl.float32)
+            x = tl.load(X + pid * K + cols, mask=cols < K, other=0.0).to(
+                tl.float32
+            )
             scale, stored = FINALIZE_SCALE(
                 CALC_SCALE(x, "float8e4m3"), "float32", 1.0, 1.0
             )
@@ -90,8 +92,12 @@ def _quant_compact(
     cols = tl.arange(0, BLOCK)
     for row in tl.range(slot, count, SPLITS):
         pid = expert * CAP + row
-        x = tl.load(X + pid * K + cols, mask=cols < K, other=0.0).to(tl.float32)
-        scale, stored = FINALIZE_SCALE(CALC_SCALE(x, "float8e4m3"), "float32", 1.0, 1.0)
+        x = tl.load(X + pid * K + cols, mask=cols < K, other=0.0).to(
+            tl.float32
+        )
+        scale, stored = FINALIZE_SCALE(
+            CALC_SCALE(x, "float8e4m3"), "float32", 1.0, 1.0
+        )
         inv_scale = 1 / scale
         q = QUANT_TENSOR(x * inv_scale, "float8e4m3")
         tl.store(Q + pid * K + cols, q, mask=cols < K)
@@ -135,8 +141,13 @@ def masked_row_quant(
         or scales.dtype != torch.float32
     ):
         raise TypeError("Expected BF16 input, E4M3 output and FP32 scales")
-    if tuple(quanted.shape) != (e * cap, k) or tuple(scales.shape) != (e * cap, 1):
-        raise ValueError("Expected physical [E*capacity,K] q and [E*capacity,1] scales")
+    if tuple(quanted.shape) != (e * cap, k) or tuple(scales.shape) != (
+        e * cap,
+        1,
+    ):
+        raise ValueError(
+            "Expected physical [E*capacity,K] q and [E*capacity,1] scales"
+        )
     if counts.dtype != torch.int32 or tuple(counts.shape) != (e,):
         raise TypeError("Expected device int32[E] counts")
     tensors = (inputs, quanted, scales, counts)
@@ -162,7 +173,9 @@ def masked_row_quant(
         not isinstance(f, triton.runtime.jit.JITFunction)
         for f in (calc_scale, finalize_scale, quant_tensor)
     ):
-        raise TypeError("Numeric callbacks must be pinned Triton JIT functions")
+        raise TypeError(
+            "Numeric callbacks must be pinned Triton JIT functions"
+        )
     if row_splits is not None:
         if row_splits not in (1, 2, 4, 8, 16, 32):
             raise ValueError("Invalid compact row split count")

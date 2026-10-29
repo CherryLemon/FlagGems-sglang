@@ -39,6 +39,7 @@ def fp4_inputs(b, width, ratio=1, seed=52, page=256):
     lens = torch.full((b,), width, dtype=torch.int64, device="cuda")
     return q, weights, mapping, req, lens, table, page, ratio, width
 
+
 def fp4_reference(q, weights, mapping, req, lens, table, page, ratio, width):
     payload = table[:, : page * 64].reshape(-1, 64)
     scales = table[:, page * 64 :].reshape(-1, 4)
@@ -71,6 +72,7 @@ def fp4_reference(q, weights, mapping, req, lens, table, page, ratio, width):
         )
         result.append(torch.where(valid, score, -torch.inf))
     return torch.stack(result)
+
 
 def fp4_serving_graph_inputs(b, ratio, seed=52):
     """640K Graph capacity, 128K visible input, distinct per-request KV pages."""
@@ -118,6 +120,7 @@ def fp4_serving_graph_inputs(b, ratio, seed=52):
         full_capacity // ratio,
     )
 
+
 def assert_exact(a, b):
     if isinstance(a, (tuple, list)):
         assert len(a) == len(b)
@@ -129,6 +132,7 @@ def assert_exact(a, b):
         assert torch.equal(
             a.contiguous().view(torch.uint8), b.contiguous().view(torch.uint8)
         ), "visible storage bytes differ"
+
 
 def changed_graph(fn, args, refresh, reference, repeats=3):
     for _ in range(3):

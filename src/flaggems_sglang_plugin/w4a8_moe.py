@@ -76,9 +76,13 @@ def tune_table(table, e, stage):
             out.append((cursor, upper, copy.deepcopy(original)))
     # Exact point completeness also prevents a partially changed table.
     for point in _points(e):
-        matched = [t for lo, hi, t in out if lo < point <= (hi if hi > 0 else 1 << 62)]
+        matched = [
+            t for lo, hi, t in out if lo < point <= (hi if hi > 0 else 1 << 62)
+        ]
         if len(matched) != 1 or matched[0].get("use_tma_c") is not False:
-            raise ValueError("Native tactic table has gaps or overlapping intervals")
+            raise ValueError(
+                "Native tactic table has gaps or overlapping intervals"
+            )
     return out
 
 
@@ -94,7 +98,8 @@ def _eligible(runner, hidden, ids, counts, expected_m, input_scale):
     layer = runner.layer
     if (
         getattr(layer, "_dsv4_mxfp4_backend", None) != "humming"
-        or getattr(layer, "_humming_uses_deepep_fp8_dispatch", False) is not False
+        or getattr(layer, "_humming_uses_deepep_fp8_dispatch", False)
+        is not False
     ):
         return None
     if (
@@ -103,7 +108,10 @@ def _eligible(runner, hidden, ids, counts, expected_m, input_scale):
         or input_scale is not None
     ):
         return None
-    if tuple(hidden.shape) != (e, 1024, 5120) or hidden.dtype != torch.bfloat16:
+    if (
+        tuple(hidden.shape) != (e, 1024, 5120)
+        or hidden.dtype != torch.bfloat16
+    ):
         return None
     topk = 6 if e == 48 else 3
     if (
@@ -143,7 +151,9 @@ def _eligible(runner, hidden, ids, counts, expected_m, input_scale):
             "use_fused_e8m0_scale": True,
             "use_packed_k_layout": False,
         }
-        if any(getattr(m, key, None) != value for key, value in expected.items()):
+        if any(
+            getattr(m, key, None) != value for key, value in expected.items()
+        ):
             return None
         if any(
             str(getattr(m, key, None)) != value
@@ -157,7 +167,8 @@ def _eligible(runner, hidden, ids, counts, expected_m, input_scale):
         ):
             return None
         if any(
-            getattr(getattr(m, key, None), "value", getattr(m, key, None)) != value
+            getattr(getattr(m, key, None), "value", getattr(m, key, None))
+            != value
             for key, value in {
                 "mma_type": "wgmma",
                 "weight_scale_type": "group",
@@ -335,7 +346,10 @@ def install():
     import humming
 
     if (
-        _sha(Path(humming.__file__).parent / "_native/x86_64/libhumming_launcher.so")
+        _sha(
+            Path(humming.__file__).parent
+            / "_native/x86_64/libhumming_launcher.so"
+        )
         != "97623b4157123f59bd8506727f7b52a9d8f934ebdc9329bbd5db164af5b088ff"
     ):
         raise RuntimeError("Unreviewed native Humming launcher")
@@ -343,7 +357,10 @@ def install():
 
     math = (calc_scale, finalize_scale, quant_tensor)
     for fn in math:
-        if hashlib.sha256(fn.src.encode()).hexdigest() != MATH_PINS[fn.__name__]:
+        if (
+            hashlib.sha256(fn.src.encode()).hexdigest()
+            != MATH_PINS[fn.__name__]
+        ):
             raise RuntimeError("Unreviewed native quant math: " + fn.__name__)
     from flaggems_sglang_plugin.compat.dsv41.masked_row_quant import (
         MASKED_ROW_QUANT_ABI,

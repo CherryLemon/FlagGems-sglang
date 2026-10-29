@@ -12,10 +12,10 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.mark.parametrize("rows,heads", [(1, 32), (17, 8)])
 def test_candidate_score_small_shapes_use_general_kernel(rows, heads):
-    from flaggems_sglang_plugin.prefill_compat import fp8_index_logits_prefill
     from flaggems_sglang.runtime.backend._nvidia.hopper.ops.dsv41_fp8_prefill_candidates import (
         supports_candidate_prefill,
     )
+    from flaggems_sglang_plugin.prefill_compat import fp8_index_logits_prefill
 
     length, block_size = 129, 8
     q = torch.randint(-2, 3, (rows, heads, 128), device="cuda").to(
@@ -50,6 +50,7 @@ def test_candidate_score_small_shapes_use_general_kernel(rows, heads):
 @pytest.mark.parametrize("rows", [1, 17])
 def test_mhc_bridge_preserves_matrix_and_output_shapes(rows):
     from flag_gems.fused.dsv41.mhc import hc_mix_stats, hc_split_sinkhorn
+
     from flaggems_sglang_plugin.compat.dsv41.mhc import hc_mix_stats_sinkhorn
 
     hc, width = 4, 20480

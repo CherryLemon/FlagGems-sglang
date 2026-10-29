@@ -1621,7 +1621,8 @@ ops:
       - stable: '1.0'
   - id: dsv41_fp4_indexer
     description: H100 packed E2M1/UE8M0 index scoring with six-query reuse and persistent scheduling.
-    for: [fp4_index_logits_req_to_token, fp4_index_logits_candidate_blocks]
+    for: [fp4_index_logits_req_to_token, fp4_index_logits_candidate_blocks,
+          dsv41_long_context_producer, dsv41_long_context_compact]
     labels: [fused, sglang, DeepSeekV4]
     kind: [NeuralNetwork]
     stages:
