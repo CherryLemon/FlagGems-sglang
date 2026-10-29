@@ -15,12 +15,12 @@
 """Explicit reference contracts through shared helpers and real pytest hooks."""
 
 import importlib.util
-import inspect
 import json
 import math
 import sys
 import textwrap
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -42,123 +42,88 @@ def contract():
     return module
 
 
-def _compare(actual, expected):
-    assert actual == expected
-
-
 def _forbidden(*args, **kwargs):
     raise AssertionError("the original candidate was called")
 
 
-def test_default_and_reference_candidate_selection(contract):
-    @contract.reference_test
-    def case():
-        return contract.ReferenceCase([1, 2], _forbidden, sum, _compare)
+def test_default_candidate_is_the_current_public_export(contract, monkeypatch):
+    class FalseyCandidate:
+        def __bool__(self):
+            return False
 
-    with pytest.raises(AssertionError, match="original candidate"):
-        case()
+        def __call__(self, value):
+            return value + 1
+
+    public = ModuleType("flaggems_sglang")
+    original, injected = _forbidden, FalseyCandidate()
+    public.reference_probe = original
+    monkeypatch.setitem(sys.modules, "flaggems_sglang", public)
+    assert contract.get_candidate("reference_probe", reference=sum) is original
+    public.reference_probe = injected
+    assert (
+        contract.get_candidate("reference_probe", reference=None) is injected
+    )
+    assert contract.select_candidate(injected, sum) is injected
+    with contract.reference_test_mode(False):
+        assert contract.get_candidate("reference_probe") is injected
+    monkeypatch.delattr(public, "reference_probe")
+    with pytest.raises(ImportError):
+        contract.get_candidate("reference_probe", reference=sum)
+
+
+def test_reference_candidate_does_not_lookup_the_public_export(
+    contract, monkeypatch
+):
+    public = ModuleType("flaggems_sglang")
+    public.__getattr__ = _forbidden
+    monkeypatch.setitem(sys.modules, "flaggems_sglang", public)
+    value = [1]
+
+    def reference(values, *, increment):
+        assert values is value
+        values.append(increment)
+        return values
+
     with contract.reference_test_mode(True, "explicit-node") as state:
-        case()
-    assert (state.reference_calls, state.candidate_calls) == (2, 1)
-    with pytest.raises(AssertionError, match="original candidate"):
-        case()
-
-
-@pytest.mark.parametrize("enabled", [False, True])
-def test_independent_bundles_preserve_aliases_and_mutations(contract, enabled):
-    original = [1]
-
-    def mutate(bundle):
-        assert bundle[0] is bundle[1]
-        bundle[0].append(2)
-        return bundle
-
-    def compare(actual, expected):
-        assert actual == expected == ([1, 2], [1, 2])
-        assert actual[0] is not expected[0]
-
-    @contract.reference_test
-    def case():
-        return contract.ReferenceCase(
-            (original, original), mutate, mutate, compare
+        candidate = contract.get_candidate(
+            "absent_export", reference=reference
         )
-
-    with contract.reference_test_mode(enabled):
-        case()
-    assert original == [1]
-
-
-def test_explicit_reference_inputs_and_custom_clone(contract):
-    snapshots = []
-
-    def clone(bundle):
-        snapshots.append(tuple(bundle))
-        return list(bundle)
-
-    @contract.reference_test
-    def case(value):
-        return contract.ReferenceCase(
-            [value],
-            _forbidden,
-            sum,
-            _compare,
-            reference_inputs=[float(value)],
-            clone=clone,
-        )
-
-    assert list(inspect.signature(case).parameters) == ["value"]
-    with contract.reference_test_mode(True):
-        case(2)
-    assert snapshots == [(2.0,), (2,)]
+        assert candidate(value, increment=2) is value
+    assert value == [1, 2]
+    assert (state.reference_calls, state.candidate_calls) == (1, 1)
 
 
-def test_nested_mode_is_restored_after_an_exception(contract):
-    @contract.reference_test
-    def case():
-        return contract.ReferenceCase([1], _forbidden, sum, _compare)
-
-    with contract.reference_test_mode(True):
-        with contract.reference_test_mode(False):
-            with pytest.raises(AssertionError, match="original candidate"):
-                case()
-        case()
-    with pytest.raises(AssertionError, match="original candidate"):
-        case()
-
-
-@pytest.mark.parametrize(
-    "field", ["candidate", "reference", "compare", "clone"]
-)
-def test_missing_callable_is_an_explicit_contract_error(contract, field):
-    values = dict(inputs=[1], candidate=sum, reference=sum, compare=_compare)
-    values[field] = None
-    with pytest.raises(contract.ReferenceContractError, match=field):
-        contract.ReferenceCase(**values)
+@pytest.mark.parametrize("reference", [None, 42, "sum"])
+def test_missing_reference_is_explicit_before_any_candidate_lookup(
+    contract, monkeypatch, reference
+):
+    public = ModuleType("flaggems_sglang")
+    public.__getattr__ = _forbidden
+    monkeypatch.setitem(sys.modules, "flaggems_sglang", public)
+    with contract.reference_test_mode(True, "missing-node") as state:
+        with pytest.raises(
+            contract.ReferenceContractError, match="No predefined reference"
+        ):
+            contract.get_candidate("absent_export", reference=reference)
+    assert state.candidate_calls == 0
+    assert len(state.contract_errors) == 1
 
 
-@pytest.mark.parametrize("value", [None, {}, sum])
-def test_factory_cannot_hide_a_missing_reference_contract(contract, value):
-    @contract.reference_test
-    def case():
-        return value
-
-    with pytest.raises(contract.ReferenceContractError, match="ReferenceCase"):
-        case()
-
-
-def test_reference_mode_still_executes_the_comparator(contract):
-    def compare(actual, expected):
-        raise AssertionError("the original comparison executed")
-
-    @contract.reference_test
-    def case():
-        return contract.ReferenceCase([1], _forbidden, sum, compare)
-
+def test_omitted_reference_and_nested_mode_restoration(contract, monkeypatch):
+    public = ModuleType("flaggems_sglang")
+    public.reference_probe = _forbidden
+    monkeypatch.setitem(sys.modules, "flaggems_sglang", public)
     with contract.reference_test_mode(True):
         with pytest.raises(
-            AssertionError, match="original comparison executed"
+            contract.ReferenceContractError, match="No predefined reference"
         ):
-            case()
+            contract.get_candidate("reference_probe")
+        with contract.reference_test_mode(False):
+            assert contract.get_candidate("reference_probe") is _forbidden
+        assert (
+            contract.get_candidate("reference_probe", reference=sum)([1]) == 1
+        )
+    assert contract.get_candidate("reference_probe") is _forbidden
 
 
 @pytest.fixture
@@ -187,24 +152,20 @@ def _accuracy(pytester, source=None):
     if source is None:
         source = """
             import pytest
-            import flaggems_sglang
-            from flaggems_sglang.reference_candidate import (
-                ReferenceCase, reference_test,
-            )
+            from flaggems_sglang.reference_candidate import get_candidate
 
-            def compare(actual, expected):
-                assert actual == expected
+            def reference(a, b):
+                return a + b
 
             @pytest.mark.reference_probe
             @pytest.mark.parametrize('value', [1, 2])
-            @reference_test
             def test_candidate(value):
-                return ReferenceCase(
-                    (value, 2),
-                    lambda args: flaggems_sglang.reference_probe(*args),
-                    lambda args: sum(args),
-                    compare,
+                expected = reference(value, 2)
+                candidate = get_candidate(
+                    'reference_probe', reference=reference,
                 )
+                actual = candidate(value, 2)
+                assert actual == expected
         """
     (pytester.path / path).write_text(textwrap.dedent(source))
     return path
@@ -302,7 +263,7 @@ def test_real_accuracy_hooks_record_each_reference_candidate(
     assert result.ret == 0
     assert len(data) == 2
     assert all(row["candidate_source"] == "reference" for row in data.values())
-    assert all(row["reference_calls"] == 2 for row in data.values())
+    assert all(row["reference_calls"] == 1 for row in data.values())
     assert all(row["reference_candidate_calls"] == 1 for row in data.values())
 
 
@@ -310,8 +271,11 @@ def test_normal_execution_and_external_overrides_remain_available(
     pytester, reference_project
 ):
     path = _accuracy(pytester)
-    result, _ = _run(pytester, path, enabled=False, report="ordinary.json")
+    result, ordinary = _run(
+        pytester, path, enabled=False, report="ordinary.json"
+    )
     result.assert_outcomes(failed=2)
+    assert all("candidate_source" not in row for row in ordinary.values())
     candidate = pytester.makepyfile(candidate="def run(a, b): return a + b\n")
     result, data = _run(
         pytester,
@@ -322,6 +286,25 @@ def test_normal_execution_and_external_overrides_remain_available(
     )
     result.assert_outcomes(passed=2)
     assert result.ret == 0
+
+    dummy = pytester.path / "dummy.json"
+    result = pytester.runpytest_subprocess(
+        path,
+        "--dummy-candidate=reference_probe",
+        f"--dummy-report={dummy}",
+        "-q",
+        timeout=90,
+    )
+    assert result.ret == 0
+    records = json.loads(dummy.read_text())
+    assert records["status"] == "PASSED"
+    assert len(records["records"]) == 2
+    assert all(
+        row["status"] == "REACHED"
+        and row["calls"] == 1
+        and row["unexpected_calls"] == 0
+        for row in records["records"]
+    )
     assert all(
         row.get("candidate_source") != "reference" for row in data.values()
     )
@@ -374,105 +357,159 @@ def test_missing_declaration_fails_only_when_enabled_and_selected(
 
 
 @pytest.mark.parametrize(
-    "kind", ["bad_factory", "empty_execution", "counter_only"]
+    "argument", ["", ", reference=None", ", reference=42"]
 )
-def test_a_declaration_must_execute_an_explicit_reference_contract(
-    pytester, reference_project, kind
+def test_direct_test_requires_a_callable_reference(
+    pytester, reference_project, argument
 ):
-    if kind == "bad_factory":
-        source = """
-            from flaggems_sglang.reference_candidate import reference_test
-            @reference_test
-            def test_candidate():
-                reference = lambda args: args
-        """
-    elif kind == "empty_execution":
-        source = """
-            from flaggems_sglang.reference_candidate import (
-                ReferenceCase, reference_test,
-            )
-            @reference_test
-            def declared():
-                return ReferenceCase([1], sum, sum, lambda a,b: None)
-            def test_candidate():
-                pass
-            test_candidate.__dict__.update(declared.__dict__)
-        """
-    else:
-        source = """
-            from flaggems_sglang.reference_candidate import (
-                ReferenceCase, reference_test, select_candidate,
-            )
-            @reference_test
-            def declared():
-                return ReferenceCase([1], sum, sum, lambda a,b: None)
-            def test_candidate():
-                operation = select_candidate(sum, sum, label='counter-only-node')
-                operation([1])
-            test_candidate.__dict__.update(declared.__dict__)
-        """
-    path = _accuracy(pytester, source)
-    result, _ = _run(pytester, path)
-    assert result.ret != 0
-    assert (
-        "ReferenceCase" in result.stdout.str()
-        or "candidate call" in result.stdout.str()
-        or "reference contract" in result.stdout.str().lower()
+    path = _accuracy(
+        pytester,
+        f"""
+        from flaggems_sglang.reference_candidate import get_candidate
+        def test_candidate():
+            candidate = get_candidate('reference_probe'{argument})
+            candidate([1])
+        """,
     )
+    result, data = _run(pytester, path)
+    assert result.ret != 0
+    assert data[path + "::test_candidate"]["result"] == "failed"
+    assert "predefined reference" in result.stdout.str().lower()
 
 
-@pytest.mark.parametrize("conversion", ["skip", "xfail", "fixture_skip"])
+@pytest.mark.parametrize(
+    "body",
+    [
+        "pass",
+        "pytest.skip('no declaration')",
+        "pytest.xfail('no declaration')",
+        "get_candidate('reference_probe', reference=sum)",
+    ],
+)
+def test_another_node_cannot_cover_a_missing_or_unused_candidate(
+    pytester, reference_project, body
+):
+    path = _accuracy(
+        pytester,
+        f"""
+        import pytest
+        from flaggems_sglang.reference_candidate import get_candidate
+        def test_good():
+            assert get_candidate('reference_probe', reference=sum)([1]) == 1
+        def test_bad():
+            {body}
+        """,
+    )
+    result, data = _run(pytester, path)
+    assert result.ret != 0
+    assert data[path + "::test_good"]["result"] == "passed"
+    bad = data[path + "::test_bad"]
+    assert bad["result"] == "failed"
+    assert bad["reference_candidate_calls"] == 0
+    assert "reference" in result.stdout.str().lower()
+
+
+def test_fixture_invocation_cannot_replace_the_test_body_call(
+    pytester, reference_project
+):
+    path = _accuracy(
+        pytester,
+        """
+        import pytest
+        from flaggems_sglang.reference_candidate import get_candidate
+        @pytest.fixture
+        def prepared():
+            assert get_candidate('reference_probe', reference=sum)([1]) == 1
+        def test_candidate(prepared):
+            pass
+        """,
+    )
+    result, data = _run(pytester, path)
+    assert result.ret != 0
+    assert data[path + "::test_candidate"]["reference_candidate_calls"] == 0
+
+
+def test_direct_test_keeps_its_original_comparison(
+    pytester, reference_project
+):
+    path = _accuracy(
+        pytester,
+        """
+        from flaggems_sglang.reference_candidate import get_candidate
+        def test_candidate():
+            reference = sum
+            expected = reference([1, 2])
+            actual = get_candidate('reference_probe', reference=reference)([1, 2])
+            assert actual == expected + 1, 'the original comparison executed'
+        """,
+    )
+    result, data = _run(pytester, path)
+    assert result.ret != 0
+    assert data[path + "::test_candidate"]["reference_candidate_calls"] == 1
+    assert "the original comparison executed" in result.stdout.str()
+
+
+@pytest.mark.parametrize(
+    "conversion",
+    ["skip", "xfail", "fixture_skip", "teardown_xfail", "marked_xfail"],
+)
 def test_contract_errors_cannot_be_hidden_by_skip_or_xfail(
     pytester, reference_project, conversion
 ):
     source = """
         import pytest
         from flaggems_sglang.reference_candidate import (
-            ReferenceCase, ReferenceContractError, reference_test,
+            ReferenceContractError, get_candidate,
         )
 
-        def compare(actual, expected):
-            assert actual == expected
-
-        def good_case():
-            return ReferenceCase([1], sum, sum, compare)
-
-        @reference_test
         def test_good():
-            return good_case()
+            assert get_candidate('reference_probe', reference=sum)([1]) == 1
     """
     if conversion == "fixture_skip":
         source += """
         @pytest.fixture
         def bad_case():
             try:
-                return ReferenceCase([1], sum, None, compare)
+                get_candidate('reference_probe', reference=None)
             except ReferenceContractError:
                 pytest.skip('fixture hid its missing reference')
 
-        @reference_test
         def test_bad(bad_case):
-            return bad_case
+            pass
+        """
+    elif conversion == "teardown_xfail":
+        source += """
+        @pytest.fixture
+        def bad_case():
+            yield
+            try:
+                get_candidate('reference_probe', reference=None)
+            except ReferenceContractError:
+                pytest.xfail('teardown hid its missing reference')
+
+        def test_bad(bad_case):
+            assert get_candidate('reference_probe', reference=sum)([1]) == 1
+        """
+    elif conversion == "marked_xfail":
+        source += """
+        @pytest.mark.xfail(reason='a missing reference must remain an error')
+        def test_bad():
+            get_candidate('reference_probe', reference=None)
         """
     else:
         source += f"""
-        @reference_test
-        def completed():
-            return good_case()
-
         def test_bad():
-            completed()
+            assert get_candidate('reference_probe', reference=sum)([1]) == 1
             try:
-                ReferenceCase([1], sum, None, compare)
+                get_candidate('reference_probe', reference=None)
             except ReferenceContractError:
                 pytest.{conversion}('test hid its missing reference')
-        test_bad.__dict__.update(completed.__dict__)
         """
     path = _accuracy(pytester, source)
     result, data = _run(pytester, path)
     assert result.ret != 0
     assert data[path + "::test_good"]["result"] == "passed"
-    assert data[path + "::test_bad"]["result"] != "passed"
+    assert data[path + "::test_bad"]["result"] == "failed"
     output = result.stdout.str().lower()
     assert "referencecontracterror" in output or "reference contract" in output
 
@@ -485,14 +522,36 @@ def test_empty_or_all_skipped_reference_validation_cannot_pass(
     if selection == "all_skip":
         source = """
             import pytest
-            from flaggems_sglang.reference_candidate import reference_test
-            @reference_test
+            from flaggems_sglang.reference_candidate import get_candidate
             def test_candidate():
+                get_candidate('reference_probe', reference=sum)
                 pytest.skip('capability absent')
         """
     path = _accuracy(pytester, source)
     result, _ = _run(pytester, path)
     assert result.ret != 0
+
+
+def test_declared_capability_skip_is_preserved_alongside_real_calls(
+    pytester, reference_project
+):
+    path = _accuracy(
+        pytester,
+        """
+        import pytest
+        from flaggems_sglang.reference_candidate import get_candidate
+        @pytest.mark.parametrize('available', [True, False])
+        def test_candidate(available):
+            candidate = get_candidate('reference_probe', reference=sum)
+            if not available:
+                pytest.skip('explicit reference exists but input unsupported')
+            assert candidate([1]) == 1
+        """,
+    )
+    result, data = _run(pytester, path)
+    result.assert_outcomes(passed=1, skipped=1)
+    assert result.ret == 0
+    assert sum(row["reference_candidate_calls"] for row in data.values()) == 1
 
 
 def test_benchmark_times_the_explicit_reference_for_every_case(

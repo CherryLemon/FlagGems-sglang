@@ -22,7 +22,7 @@ import pytest
 import torch
 
 from flaggems_sglang.reference import get_reference
-from flaggems_sglang.reference_candidate import ReferenceCase, reference_test
+from flaggems_sglang.reference_candidate import get_candidate
 
 from . import conftest as cfg
 
@@ -60,7 +60,6 @@ CASE_IDS = [f"T{c[0]}_qh{c[1]}_kh{c[2]}_hd{c[3]}_rd{c[4]}" for c in ALL_CASES]
 
 @pytest.mark.parametrize("case", ALL_CASES, ids=CASE_IDS)
 @pytest.mark.mrope_fused
-@reference_test
 def test_mrope_fused(case):
     num_tokens, n_qh, n_kh, head_size, rotary_dim, mrope_section, max_pos = (
         case
@@ -88,7 +87,8 @@ def test_mrope_fused(case):
         dtype=torch.int64,
     )
 
-    inputs = (
+    # Reference (pure torch)
+    q_ref, k_ref = mrope_fused_ref(
         q,
         k,
         cos_sin_cache,
@@ -98,25 +98,18 @@ def test_mrope_fused(case):
         rotary_dim,
     )
 
-    def invoke_reference(inputs):
-        return mrope_fused_ref(*inputs)
-
-    def invoke_candidate(inputs):
-        # Keep candidate resolution lazy for overrides and reference mode.
-        from flaggems_sglang import mrope_fused
-
-        return mrope_fused(*inputs)
-
-    def compare(actual, expected):
-        q_out, k_out = actual
-        q_ref, k_ref = expected
-        atol, rtol = 1.5e-2, 1.5e-2
-        torch.testing.assert_close(q_out, q_ref, atol=atol, rtol=rtol)
-        torch.testing.assert_close(k_out, k_ref, atol=atol, rtol=rtol)
-
-    return ReferenceCase(
-        inputs=inputs,
-        candidate=invoke_candidate,
-        reference=invoke_reference,
-        compare=compare,
+    # Operator under test
+    candidate = get_candidate("mrope_fused", reference=mrope_fused_ref)
+    q_out, k_out = candidate(
+        q,
+        k,
+        cos_sin_cache,
+        positions,
+        mrope_section,
+        head_size,
+        rotary_dim,
     )
+
+    atol, rtol = 1.5e-2, 1.5e-2
+    torch.testing.assert_close(q_out, q_ref, atol=atol, rtol=rtol)
+    torch.testing.assert_close(k_out, k_ref, atol=atol, rtol=rtol)

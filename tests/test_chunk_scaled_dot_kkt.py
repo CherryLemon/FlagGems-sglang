@@ -19,7 +19,7 @@ import torch
 
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
-from flaggems_sglang.reference_candidate import ReferenceCase, reference_test
+from flaggems_sglang.reference_candidate import get_candidate
 
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
@@ -131,7 +131,6 @@ CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.chunk_scaled_dot_kkt
-@reference_test
 def test_chunk_scaled_dot_kkt(case_idx):
     # Build only this case; a module-level list would allocate
     # every case's tensors at import time.
@@ -145,36 +144,30 @@ def test_chunk_scaled_dot_kkt(case_idx):
     kwargs = case if isinstance(case, dict) else {}
 
     # Reference
-    def invoke_reference(inputs):
-        return reference(**inputs)
+    expected = reference(**kwargs)
 
-    def invoke_candidate(inputs):
-        try:
-            from flaggems_sglang import chunk_scaled_dot_kkt
-        except (ImportError, ModuleNotFoundError):
-            pytest.skip("fla/chunk_scaled_dot_kkt ops module not found")
-        try:
-            return chunk_scaled_dot_kkt(**inputs)
-        except NotImplementedError:
-            pytest.skip("fla/chunk_scaled_dot_kkt not yet implemented")
+    # Operator under test
+    try:
+        candidate = get_candidate("chunk_scaled_dot_kkt", reference=reference)
+    except (ImportError, ModuleNotFoundError):
+        pytest.skip("fla/chunk_scaled_dot_kkt ops module not found")
+        return
 
-    def compare(actual, expected):
-        # Compare
-        if check is not None:
-            check(actual, expected)
-        elif isinstance(expected, torch.Tensor):
-            assert_close(actual, expected)
-        elif isinstance(expected, (tuple, list)):
-            for a, e in zip(actual, expected):
-                if isinstance(e, torch.Tensor):
-                    assert_close(a, e)
-        # Restore check for reuse
-        if check is not None:
-            case["check"] = check
+    try:
+        actual = candidate(**kwargs)
+    except NotImplementedError:
+        pytest.skip("fla/chunk_scaled_dot_kkt not yet implemented")
+        return
 
-    return ReferenceCase(
-        inputs=kwargs,
-        candidate=invoke_candidate,
-        reference=invoke_reference,
-        compare=compare,
-    )
+    # Compare
+    if check is not None:
+        check(actual, expected)
+    elif isinstance(expected, torch.Tensor):
+        assert_close(actual, expected)
+    elif isinstance(expected, (tuple, list)):
+        for a, e in zip(actual, expected):
+            if isinstance(e, torch.Tensor):
+                assert_close(a, e)
+    # Restore check for reuse
+    if check is not None:
+        case["check"] = check

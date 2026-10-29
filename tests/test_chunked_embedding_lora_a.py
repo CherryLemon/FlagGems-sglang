@@ -20,7 +20,7 @@ import torch
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
 from flaggems_sglang.reference._lora_batch_utils import make_batch_info
-from flaggems_sglang.reference_candidate import ReferenceCase, reference_test
+from flaggems_sglang.reference_candidate import get_candidate
 
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
@@ -118,7 +118,6 @@ CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.chunked_embedding_lora_a
-@reference_test
 def test_chunked_embedding_lora_a(case_idx):
     # Build only this case; a module-level list would allocate
     # every case's tensors at import time.
@@ -132,38 +131,34 @@ def test_chunked_embedding_lora_a(case_idx):
     kwargs = case if isinstance(case, dict) else {}
 
     # Reference
-    def invoke_reference(inputs):
-        return reference(**inputs)
+    expected = reference(**kwargs)
 
-    def invoke_candidate(inputs):
-        try:
-            from flaggems_sglang import chunked_embedding_lora_a
-        except (ImportError, ModuleNotFoundError):
-            pytest.skip("lora/chunked_embedding_lora_a ops module not found")
-        try:
-            return chunked_embedding_lora_a(**inputs)
-        except NotImplementedError:
-            pytest.skip("lora/chunked_embedding_lora_a not yet implemented")
+    # Operator under test
+    try:
+        candidate = get_candidate(
+            "chunked_embedding_lora_a", reference=reference
+        )
+    except (ImportError, ModuleNotFoundError):
+        pytest.skip("lora/chunked_embedding_lora_a ops module not found")
+        return
 
-    def compare(actual, expected):
-        # Compare
-        if check is not None:
-            check(actual, expected)
-        elif isinstance(expected, torch.Tensor):
-            assert_close(actual, expected)
-        elif isinstance(expected, (tuple, list)):
-            for a, e in zip(actual, expected):
-                if a is None and e is None:
-                    continue
-                if isinstance(e, torch.Tensor):
-                    assert_close(a, e)
-        # Restore check for reuse
-        if check is not None:
-            case["check"] = check
+    try:
+        actual = candidate(**kwargs)
+    except NotImplementedError:
+        pytest.skip("lora/chunked_embedding_lora_a not yet implemented")
+        return
 
-    return ReferenceCase(
-        inputs=kwargs,
-        candidate=invoke_candidate,
-        reference=invoke_reference,
-        compare=compare,
-    )
+    # Compare
+    if check is not None:
+        check(actual, expected)
+    elif isinstance(expected, torch.Tensor):
+        assert_close(actual, expected)
+    elif isinstance(expected, (tuple, list)):
+        for a, e in zip(actual, expected):
+            if a is None and e is None:
+                continue
+            if isinstance(e, torch.Tensor):
+                assert_close(a, e)
+    # Restore check for reuse
+    if check is not None:
+        case["check"] = check

@@ -19,7 +19,7 @@ import torch
 
 import flaggems_sglang
 from flaggems_sglang.reference import get_reference
-from flaggems_sglang.reference_candidate import ReferenceCase, reference_test
+from flaggems_sglang.reference_candidate import get_candidate
 
 # ---------------------------------------------------------------------------
 # Tolerance helper (from kernel-comp-baseline/harness/correctness.py)
@@ -128,7 +128,6 @@ CORRECTNESS_CASES = list(range(len(_CASE_FACTORIES)))
 
 @pytest.mark.parametrize("case_idx", range(len(CORRECTNESS_CASES)))
 @pytest.mark.fused_moe_router_cudacore
-@reference_test
 def test_fused_moe_router_cudacore(case_idx):
     # Build only this case; a module-level list would allocate
     # every case's tensors at import time.
@@ -142,36 +141,32 @@ def test_fused_moe_router_cudacore(case_idx):
     kwargs = case if isinstance(case, dict) else {}
 
     # Reference
-    def invoke_reference(inputs):
-        return reference(**inputs)
+    expected = reference(**kwargs)
 
-    def invoke_candidate(inputs):
-        try:
-            from flaggems_sglang import fused_moe_router_cudacore
-        except (ImportError, ModuleNotFoundError):
-            pytest.skip("moe/fused_moe_router_cudacore ops module not found")
-        try:
-            return fused_moe_router_cudacore(**inputs)
-        except NotImplementedError:
-            pytest.skip("moe/fused_moe_router_cudacore not yet implemented")
+    # Operator under test
+    try:
+        candidate = get_candidate(
+            "fused_moe_router_cudacore", reference=reference
+        )
+    except (ImportError, ModuleNotFoundError):
+        pytest.skip("moe/fused_moe_router_cudacore ops module not found")
+        return
 
-    def compare(actual, expected):
-        # Compare
-        if check is not None:
-            check(actual, expected)
-        elif isinstance(expected, torch.Tensor):
-            assert_close(actual, expected)
-        elif isinstance(expected, (tuple, list)):
-            for a, e in zip(actual, expected):
-                if isinstance(e, torch.Tensor):
-                    assert_close(a, e)
-        # Restore check for reuse
-        if check is not None:
-            case["check"] = check
+    try:
+        actual = candidate(**kwargs)
+    except NotImplementedError:
+        pytest.skip("moe/fused_moe_router_cudacore not yet implemented")
+        return
 
-    return ReferenceCase(
-        inputs=kwargs,
-        candidate=invoke_candidate,
-        reference=invoke_reference,
-        compare=compare,
-    )
+    # Compare
+    if check is not None:
+        check(actual, expected)
+    elif isinstance(expected, torch.Tensor):
+        assert_close(actual, expected)
+    elif isinstance(expected, (tuple, list)):
+        for a, e in zip(actual, expected):
+            if isinstance(e, torch.Tensor):
+                assert_close(a, e)
+    # Restore check for reuse
+    if check is not None:
+        case["check"] = check

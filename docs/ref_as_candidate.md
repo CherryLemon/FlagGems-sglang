@@ -6,8 +6,7 @@
 `--ref-as-candidate` checks that a selected correctness test or benchmark can
 execute with its explicitly declared reference on the candidate side. It is off
 by default. Existing operator tests, external overrides and dummy checks retain
-their usual commands and behavior. This design follows FlagGems PR #7630; that
-unmerged PR is not a runtime dependency.
+their usual commands and behavior.
 
 ```sh
 pytest -q tests/test_silu_and_mul.py -m silu_and_mul --ref-as-candidate \
@@ -18,45 +17,54 @@ pytest -q benchmark/test_silu_and_mul.py -m silu_and_mul --level core \
 
 ## Declare a correctness reference
 
-All 125 operator correctness tests declare their references through this
-contract, including the in-place softcap and tuple-output mrope tests. Existing
-parameter grids, reference dispatch, comparison tolerances and candidate skips
-are retained. To add another test, decorate a parametrized factory:
+All 125 operator correctness tests use ordinary pytest functions and explicitly
+supply their existing reference to `get_candidate`. Input generation, the
+expected-side reference call, comparisons and test-owned copies remain in the
+original test body. For example:
 
 ```python
-from flaggems_sglang.reference_candidate import ReferenceCase, reference_test
+from flaggems_sglang.reference import get_reference
+from flaggems_sglang.reference_candidate import get_candidate
 
 
-@reference_test
 def test_example():
-    return ReferenceCase(
-        inputs={"value": [1, 2]},
-        candidate=lambda inputs: candidate(**inputs),
-        reference=lambda inputs: explicitly_defined_reference(**inputs),
-        compare=lambda actual, expected: check(actual, expected),
-    )
+    reference = get_reference("example")
+    candidate = get_candidate("example", reference=reference)
+    inputs = build_inputs()
+    expected = reference(**inputs)
+    actual = candidate(**inputs)
+    check(actual, expected)
 ```
 
-Each operation receives one input bundle. Keep candidate lookup inside the
-callable so external overrides still work and reference mode does not need a
-public candidate export. Merely naming a local variable `reference` does not
-expose the contract. Selecting an unconverted test reports `No predefined
-reference` and its pytest node ID. Missing/non-callable references, invalid
-factory returns and missing candidate-side execution are errors.
+Without the flag, `get_candidate` returns the operator's current public export,
+including external overrides and dummy injection. With the flag it returns the
+supplied reference, using the same selection mechanism as benchmarks. The actual
+candidate export is never looked up in this mode, so it may be absent.
 
-The runner clones both bundles before either operation. Optional
-`reference_inputs` supplies CPU/upcast inputs for the expected side; the default
-is `inputs`. The default clone is `copy.deepcopy`. Supply `clone` explicitly when
-view/storage/gradient relationships need specialized handling. It must preserve
-within-bundle aliases while making the two executions independent. Return all
-observable mutated buffers and outputs, and retain shape, device, dtype,
-mutation and alias checks in `compare`. The framework does not guess an ABI,
-move outputs between devices or adjust dtypes.
+The reference and candidate must accept the same arguments. Supply a small
+reference adapter explicitly when their original signatures differ. A
+missing/non-callable reference reports `No predefined reference`. No same-named
+Torch function or implicit reference is invented.
 
-Without the flag the wrapper runs the real candidate and original comparator.
-With the flag it runs reference on both independently cloned input bundles;
-correctness JSON identifies `candidate_source: reference`, `reference_calls` and
-`reference_candidate_calls` per node.
+The helper does not take over execution or copy inputs. Keep the test's original
+input cloning, CPU/upcast reference inputs, mutation/alias checks, output
+device/dtype assertions and tolerances. In-place operations need independent
+inputs prepared by the test, as they do in normal correctness mode.
+
+The pytest plugin requires an actual candidate-side reference call in each
+passing correctness node. Missing declarations are detected at runtime, rather
+than by guessing local variable names during collection; skips/xfails cannot
+hide a missing declaration or a caught reference-contract error. A capability
+skip after a valid explicit reference selection may remain skipped, but an
+all-skip run does not count as validation. Calls made only by fixture setup do
+not satisfy the test body's invocation check.
+
+Correctness JSON identifies `candidate_source: reference` and
+`reference_candidate_calls` per node. `reference_calls` counts only invocations
+observed through the shared helper; a test's direct expected-side reference call
+is not included. The earlier `ReferenceCase`/`@reference_test` factory interface
+has been removed; migrate its input preparation and assertions back into the
+test body and use `get_candidate` for candidate selection.
 
 ## Benchmark contract
 

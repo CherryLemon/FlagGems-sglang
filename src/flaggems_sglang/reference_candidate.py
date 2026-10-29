@@ -14,21 +14,18 @@
 
 """Explicit references for opt-in correctness and candidate timing checks.
 
-Adapted from FlagGems PR #7630. No reference is discovered by operator name:
-correctness exposes a ReferenceCase and benchmarks supply a callable torch_op.
+Correctness tests explicitly pass their reference to get_candidate; benchmarks
+supply their callable torch_op. Both use the same candidate selection below.
 """
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable
 
 import pytest
 
-_USE_INPUTS = object()
 _MODE = ContextVar("flaggems_sglang_reference_test_mode", default=None)
 
 
@@ -43,34 +40,12 @@ class ReferenceContractError(ValueError):
 
 
 @dataclass
-class ReferenceCase:
-    inputs: Any
-    candidate: Callable
-    reference: Callable = None
-    compare: Callable = None
-    reference_inputs: Any = _USE_INPUTS
-    clone: Callable = deepcopy
-
-    def __post_init__(self):
-        if not callable(self.reference):
-            raise ReferenceContractError(
-                "No predefined reference: ReferenceCase.reference must be "
-                "an explicitly defined callable."
-            )
-        for name in ("candidate", "compare", "clone"):
-            if not callable(getattr(self, name)):
-                raise ReferenceContractError(
-                    f"ReferenceCase.{name} must be callable."
-                )
-
-
-@dataclass
 class _Execution:
     ref_as_candidate: bool
     nodeid: str
     reference_calls: int = 0
     candidate_calls: int = 0
-    completed_cases: int = 0
+    reference_selected: bool = False
     completed_timings: int = 0
     benchmark_selection_empty: bool = False
     contract_errors: list = field(default_factory=list)
@@ -108,6 +83,7 @@ def select_candidate(candidate, reference, label=""):
             f"{label or state.nodeid}: No predefined reference; explicitly "
             "define a callable reference before --ref-as-candidate."
         )
+    state.reference_selected = True
 
     @wraps(reference)
     def invoke(*args, **kwargs):
@@ -118,49 +94,25 @@ def select_candidate(candidate, reference, label=""):
     return invoke
 
 
-def is_reference_test(function):
-    return getattr(function, "_flaggems_sglang_reference_test", False) is True
+def get_candidate(op_name, *, reference=None):
+    """Get the current public candidate, or the explicitly supplied reference.
 
-
-def reference_test(factory):
-    """Run a factory's explicit reference/candidate on independent inputs.
-
-    Candidate lookup belongs inside the callable so ordinary overrides remain
-    effective, and ref mode does not require a public candidate export.
+    Reference mode deliberately does not look up the actual operator. Ordinary
+    lookup uses the package's current public attribute, including CLI overrides
+    and dummy injection, rather than its underlying implementation registrar.
     """
+    if reference_mode_enabled():
+        return select_candidate(None, reference, op_name)
 
-    @wraps(factory)
-    def run(*args, **kwargs):
-        state = _MODE.get()
-        if state is None:
-            with reference_test_mode(False, factory.__qualname__):
-                return run(*args, **kwargs)
-        case = factory(*args, **kwargs)
-        if not isinstance(case, ReferenceCase):
-            raise ReferenceContractError(
-                f"{state.nodeid}: No predefined reference contract; "
-                "@reference_test must return ReferenceCase with explicit "
-                "inputs, candidate, reference and compare."
-            )
-        case.__post_init__()
-        reference_inputs = (
-            case.inputs
-            if case.reference_inputs is _USE_INPUTS
-            else case.reference_inputs
-        )
-        expected_inputs = case.clone(reference_inputs)
-        actual_inputs = case.clone(case.inputs)
-        state.reference_calls += 1
-        expected = case.reference(expected_inputs)
-        operation = select_candidate(case.candidate, case.reference)
-        if not state.ref_as_candidate:
-            state.candidate_calls += 1
-        actual = operation(actual_inputs)
-        case.compare(actual, expected)
-        state.completed_cases += 1
+    import flaggems_sglang
 
-    run._flaggems_sglang_reference_test = True
-    return run
+    try:
+        candidate = getattr(flaggems_sglang, op_name)
+    except AttributeError as error:
+        raise ImportError(
+            f"Operator '{op_name}' has no public candidate in flaggems_sglang."
+        ) from error
+    return select_candidate(candidate, reference, op_name)
 
 
 def configure_reference_candidate(config):
@@ -211,12 +163,6 @@ class _ReferenceCandidatePlugin:
 
     def pytest_collection_finish(self, session):
         for item in session.items:
-            if self._accuracy(item) and not is_reference_test(item.obj):
-                raise pytest.UsageError(
-                    f"{item.nodeid}: No predefined reference; "
-                    "--ref-as-candidate requires @reference_test returning "
-                    "ReferenceCase with an explicitly defined reference."
-                )
             self.records[item.nodeid] = {"status": "NOT_RUN", "calls": 0}
 
     def pytest_collectreport(self, report):
@@ -235,7 +181,6 @@ class _ReferenceCandidatePlugin:
         # Keep only contract failures sticky across the whole node lifecycle.
         state.reference_calls = 0
         state.candidate_calls = 0
-        state.completed_cases = 0
         state.completed_timings = 0
         state.benchmark_selection_empty = False
         outcome = yield
@@ -255,7 +200,6 @@ class _ReferenceCandidatePlugin:
                 state.candidate_calls == 0
                 and not state.benchmark_selection_empty
             )
-            or (self._accuracy(item) and state.completed_cases == 0)
             or (
                 not self._accuracy(item)
                 and state.completed_timings == 0
@@ -267,8 +211,15 @@ class _ReferenceCandidatePlugin:
         ):
             outcome.force_exception(
                 ReferenceContractError(
-                    f"{item.nodeid}: explicit reference contract did not "
-                    "complete a candidate-side call and comparison/timing."
+                    f"{item.nodeid}: "
+                    + (
+                        "No predefined reference selected; explicitly pass "
+                        "a callable reference to get_candidate."
+                        if self._accuracy(item)
+                        and not state.reference_selected
+                        else "explicit reference contract did not complete "
+                        "a candidate-side call/timing."
+                    )
                 )
             )
 
@@ -280,6 +231,19 @@ class _ReferenceCandidatePlugin:
         record = self.records.setdefault(
             item.nodeid, {"status": "NOT_RUN", "calls": 0}
         )
+        if (
+            state is not None
+            and self._accuracy(item)
+            and report.skipped
+            and not state.reference_selected
+            and not state.contract_errors
+        ):
+            # No declaration must not disappear into skip/xfail, including a
+            # skipped fixture which prevented the test body from running.
+            ReferenceContractError(
+                f"{item.nodeid}: No predefined reference selected; explicitly "
+                "pass a callable reference to get_candidate."
+            )
         if (
             state is not None
             and len(state.contract_errors) > state.reported_contract_errors
@@ -310,12 +274,23 @@ class _ReferenceCandidatePlugin:
                 ),
                 calls=state.candidate_calls,
             )
-        if call.when == "call" and state is not None:
+        if state is not None and (
+            call.when == "call" or state.contract_errors
+        ):
             report.reference_candidate = {
                 "candidate_source": "reference",
                 "reference_calls": state.reference_calls,
                 "reference_candidate_calls": state.candidate_calls,
             }
+            if state.contract_errors and record["status"] == "FAILED":
+                # The ordinary JSON adapter mainly records call outcomes.
+                # Preserve contract failures from setup/teardown as well,
+                # including later successful phases of this failed node.
+                report.reference_candidate.update(
+                    result="failed",
+                    reason="ReferenceContractError: "
+                    + state.contract_errors[0],
+                )
 
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_sessionfinish(self, session, exitstatus):
